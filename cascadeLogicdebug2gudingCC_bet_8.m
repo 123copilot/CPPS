@@ -89,6 +89,11 @@ parfor idxAlpha = 1:numA
 
         round_logs = {};
 
+        % 设置可复现的随机种子，确保同一(alpha, trial)对
+        % 在不同延迟场景下产生相同的随机故障传播路径，
+        % 使得场景间的R1差异完全归因于延迟配置的不同
+        rng(idxAlpha * 100000 + trial, 'twister');
+
         %% 2：级联失效主循环
         while main_loop_keep_iterating
             fprintf('\n========== 开始第 %d 轮级联失效迭代 ==========\n', main_iteration_count);

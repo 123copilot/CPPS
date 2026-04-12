@@ -344,40 +344,12 @@ disp('基于 R1 的时延安全等级划分：');
 disp(safety_level_table);
 
 %% ====================================================================
-%% 核心图表
+%% 核心图表（体现时延的危害）
 %% ====================================================================
+% 出图顺序：箱线图(分布) → R1折线图(从箱线图数据取均值) → R3折线图 → 热力图(when)
 
-% --- 图1: R1 vs alpha 多场景对比（使用IQR截尾均值） ---
-figure;
-hold on; grid on;
-ylim([0 1.05]);
-xlabel('\alpha');
-ylabel('R_1');
-title(sprintf('R_1 vs. \\alpha (IQR-trimmed mean, attack: %s, samples: %d, p=%.2f)', ...
-    attackMode, num_samples, propagation_probability));
-for idxScenario = 1:num_delay_scenarios
-    plot(alpha_range, trimmed_mean_R1(:, idxScenario), '-o', 'LineWidth', 1.5, ...
-        'Color', scenario_colors(idxScenario, :), 'MarkerFaceColor', scenario_colors(idxScenario, :));
-end
-legend(cellstr(scenario_labels), 'Location', 'best');
-hold off;
-
-% --- 图2: R3 vs alpha 多场景对比 ---
-figure;
-hold on; grid on;
-xlabel('\alpha');
-ylabel('R_3');
-title(sprintf('R_3 vs. \\alpha (attack: %s, samples: %d, p=%.2f)', ...
-    attackMode, num_samples, propagation_probability));
-for idxScenario = 1:num_delay_scenarios
-    plot(alpha_range, mean_R3(:, idxScenario), '-o', 'LineWidth', 1.5, ...
-        'Color', scenario_colors(idxScenario, :), 'MarkerFaceColor', scenario_colors(idxScenario, :));
-end
-legend(cellstr(scenario_labels), 'Location', 'best');
-hold off;
-
-% --- 图3: R1 分布 Box Plot（全部11个α值，揭示延迟对系统不确定性的影响） ---
-% 使用全部 α 值而非子集，完整展示随 α 变化的分布特征
+% --- 图1: R1 分布 Box Plot（先展示整体数据分布，揭示延迟对系统不确定性的影响） ---
+% 使用全部 α 值，完整展示随 α 变化的分布特征
 alpha_repr_vals = alpha_range;      % 全部11个α值
 alpha_repr_idx = 1:numA;            % 对应索引
 
@@ -400,7 +372,7 @@ end
 % 组合分组标签：每个 box 由 (alpha_group, scenario) 唯一确定
 bp_position = (bp_group_alpha - 1) * (num_delay_scenarios + 1) + bp_group_scenario;
 
-figure('Position', [100, 100, 1600, 500]);   % 加宽图窗以容纳11组
+figure('Name', 'Fig1_R1_BoxPlot', 'Position', [100, 100, 1600, 500]);
 boxplot(bp_data, bp_position, ...
     'Widths', 0.6, 'Symbol', '.', 'OutlierSize', 3);
 hold on; grid on;
@@ -455,6 +427,36 @@ for ai = 1:numel(alpha_repr_idx)
             median(r1_trials), prctile(r1_trials, 25), prctile(r1_trials, 75));
     end
 end
+
+% --- 图2: R1 vs alpha 多场景对比（基于Box Plot数据的IQR截尾均值） ---
+% 从上方箱线图的原始数据中，取IQR范围内的试验取均值，绘制折线图
+figure('Name', 'Fig2_R1_vs_alpha');
+hold on; grid on;
+ylim([0 1.05]);
+xlabel('\alpha');
+ylabel('R_1');
+title(sprintf('R_1 vs. \\alpha (IQR-trimmed mean from Box Plot, attack: %s, samples: %d, p=%.2f)', ...
+    attackMode, num_samples, propagation_probability));
+for idxScenario = 1:num_delay_scenarios
+    plot(alpha_range, trimmed_mean_R1(:, idxScenario), '-o', 'LineWidth', 1.5, ...
+        'Color', scenario_colors(idxScenario, :), 'MarkerFaceColor', scenario_colors(idxScenario, :));
+end
+legend(cellstr(scenario_labels), 'Location', 'best');
+hold off;
+
+% --- 图3: R3 vs alpha 多场景对比 ---
+figure('Name', 'Fig3_R3_vs_alpha');
+hold on; grid on;
+xlabel('\alpha');
+ylabel('R_3');
+title(sprintf('R_3 vs. \\alpha (attack: %s, samples: %d, p=%.2f)', ...
+    attackMode, num_samples, propagation_probability));
+for idxScenario = 1:num_delay_scenarios
+    plot(alpha_range, mean_R3(:, idxScenario), '-o', 'LineWidth', 1.5, ...
+        'Color', scenario_colors(idxScenario, :), 'MarkerFaceColor', scenario_colors(idxScenario, :));
+end
+legend(cellstr(scenario_labels), 'Location', 'best');
+hold off;
 
 %% ====================================================================
 %% 逐轮时间序列分析
@@ -550,7 +552,7 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
         delta_delay_heatmap(:, idxA) = R1_nd - R1_hv;
     end
 
-    figure;
+    figure('Name', 'Fig4_Delay_Penalty_Heatmap');
     imagesc(1:plot_max_round, alpha_range, delta_delay_heatmap');
     set(gca, 'YDir', 'normal');
     cb = colorbar;
@@ -702,7 +704,7 @@ sensitivity_styles = {'-o', '--s', '-^', '-d', '-v', '-p', '-h'};
 sensitivity_widths = [2.5, 2.5, 1.5, 1.5, 1.5, 1.5, 1.5];
 
 % --- 图5: 全场景 R1 vs alpha 对比 ---
-figure('Position', [100, 100, 1200, 600]);
+figure('Name', 'Fig5_Sensitivity_R1_vs_alpha', 'Position', [100, 100, 1200, 600]);
 hold on; grid on;
 ylim([0 1.05]);
 xlabel('\alpha', 'FontSize', 12);
@@ -718,7 +720,7 @@ legend(cellstr(all_compare_labels), 'Location', 'best', 'FontSize', 10);
 hold off;
 
 % --- 图6: 恢复比例热力图 (action × alpha) ---
-figure('Position', [100, 100, 1000, 400]);
+figure('Name', 'Fig6_Recovery_Heatmap', 'Position', [100, 100, 1000, 400]);
 imagesc(alpha_range, 1:num_actions, action_recovery_pct');
 set(gca, 'YDir', 'normal');
 colormap(hot);
@@ -734,7 +736,7 @@ set(gca, 'YTick', 1:num_actions, 'YTickLabel', cellstr(action_name_list));
 title('Recovery %: (Action R_1 - Heavy R_1) / (NoDelay R_1 - Heavy R_1)', 'FontSize', 13);
 
 % --- 图7: 动作排名柱状图 ---
-figure('Position', [100, 100, 800, 500]);
+figure('Name', 'Fig7_Action_Ranking', 'Position', [100, 100, 800, 500]);
 bar_data_sens = mean_recovery(sort_order);
 b_sens = bar(bar_data_sens, 'FaceColor', 'flat');
 b_sens.CData = zeros(numel(bar_data_sens), 3);
@@ -753,6 +755,135 @@ for k = 1:numel(bar_data_sens)
     text(k, bar_data_sens(k) + 1, sprintf('%.1f%%', bar_data_sens(k)), ...
         'HorizontalAlignment', 'center', 'FontSize', 10, 'FontWeight', 'bold');
 end
+
+%% ====================================================================
+%% 对比实验：验证"最佳时间段 × 最佳动作"的协同效果
+%% ====================================================================
+% 设计思路：
+%   前面的热力图告诉我们 WHEN —— 在哪些α值（系统状态）下时延危害最大
+%   敏感性实验告诉我们 HOW —— 哪些工程动作最有效
+%   对比实验将两者结合，证明只有"在最佳时间段采取最佳动作"才能获得最大收益
+%
+% 三组对比条件：
+%   C1: 非最佳α区域 + 最佳动作 → 效果一般（时延本身在该区域影响不大）
+%   C2: 最佳α区域 + 非最佳动作 → 效果中等（找对了问题，但方法不是最优）
+%   C3: 最佳α区域 + 最佳动作   → 效果最好（找对问题 + 最优方法）
+
+fprintf('\n========== 对比实验: 最佳时间段 x 最佳动作 ==========\n');
+
+% --- 从R1差距确定最佳/非最佳α区域 ---
+% gap = R1_nodelay - R1_heavy（第638行已计算）
+% gap(idxAlpha) 越大 → 时延危害越大 → 这是"最佳干预时间段"
+[sorted_gap, gap_sort_idx] = sort(gap, 'descend');
+
+% 取约1/3的α值作为最佳/非最佳区域
+n_region = max(1, round(numA / 3));
+optimal_alpha_idx = gap_sort_idx(1:n_region);           % 延迟危害最大的α值
+nonoptimal_alpha_idx = gap_sort_idx(end-n_region+1:end); % 延迟危害最小的α值
+
+fprintf('最佳干预α区域（延迟危害最大）:\n');
+for k = 1:numel(optimal_alpha_idx)
+    fprintf('  alpha=%.1f, gap(R1)=%.4f\n', alpha_range(optimal_alpha_idx(k)), gap(optimal_alpha_idx(k)));
+end
+fprintf('非最佳α区域（延迟危害最小）:\n');
+for k = 1:numel(nonoptimal_alpha_idx)
+    fprintf('  alpha=%.1f, gap(R1)=%.4f\n', alpha_range(nonoptimal_alpha_idx(k)), gap(nonoptimal_alpha_idx(k)));
+end
+
+% --- 从敏感性排名确定最佳/非最佳动作 ---
+best_action_rank_idx = sort_order(1);      % 排名第1的动作
+nonbest_action_rank_idx = sort_order(end); % 排名最后的动作
+
+fprintf('最佳动作: %s (平均恢复 %.1f%%)\n', ...
+    char(action_scenarios(best_action_rank_idx).name), mean_recovery(best_action_rank_idx));
+fprintf('非最佳动作: %s (平均恢复 %.1f%%)\n', ...
+    char(action_scenarios(nonbest_action_rank_idx).name), mean_recovery(nonbest_action_rank_idx));
+
+% --- 计算三组对比条件的恢复比例 ---
+% C1: 非最佳α区域 + 最佳动作
+C1_recovery_vals = action_recovery_pct(nonoptimal_alpha_idx, best_action_rank_idx);
+C1_mean = mean(C1_recovery_vals, 'omitnan');
+
+% C2: 最佳α区域 + 非最佳动作
+C2_recovery_vals = action_recovery_pct(optimal_alpha_idx, nonbest_action_rank_idx);
+C2_mean = mean(C2_recovery_vals, 'omitnan');
+
+% C3: 最佳α区域 + 最佳动作
+C3_recovery_vals = action_recovery_pct(optimal_alpha_idx, best_action_rank_idx);
+C3_mean = mean(C3_recovery_vals, 'omitnan');
+
+fprintf('\n===== 对比实验结果 =====\n');
+fprintf('  C1 (非最佳alpha + 最佳动作 %s):  平均恢复 %.1f%%\n', ...
+    char(action_scenarios(best_action_rank_idx).name), C1_mean);
+fprintf('  C2 (最佳alpha + 非最佳动作 %s):  平均恢复 %.1f%%\n', ...
+    char(action_scenarios(nonbest_action_rank_idx).name), C2_mean);
+fprintf('  C3 (最佳alpha + 最佳动作 %s):    平均恢复 %.1f%%\n', ...
+    char(action_scenarios(best_action_rank_idx).name), C3_mean);
+
+% --- 图8: 对比实验柱状图 ---
+figure('Name', 'Fig8_Comparison_Experiment', 'Position', [100, 100, 900, 550]);
+
+comparison_data = [C1_mean, C2_mean, C3_mean];
+comparison_colors = [
+    0.60 0.60 0.60;   % C1: 灰色（一般）
+    0.93 0.69 0.13;   % C2: 金色（中等）
+    0.17 0.63 0.17;   % C3: 绿色（最佳）
+];
+
+b_comp = bar(comparison_data, 'FaceColor', 'flat');
+b_comp.CData = comparison_colors;
+
+% 构造标签：显示条件和动作名称
+optimal_alpha_str = strjoin(arrayfun(@(x) sprintf('%.1f', x), ...
+    alpha_range(optimal_alpha_idx), 'UniformOutput', false), ',');
+nonoptimal_alpha_str = strjoin(arrayfun(@(x) sprintf('%.1f', x), ...
+    alpha_range(nonoptimal_alpha_idx), 'UniformOutput', false), ',');
+
+comp_tick_labels = {
+    sprintf('C1: non-opt alpha\\{%s\\}\n+ best %s', nonoptimal_alpha_str, char(action_scenarios(best_action_rank_idx).name)), ...
+    sprintf('C2: opt alpha\\{%s\\}\n+ non-best %s', optimal_alpha_str, char(action_scenarios(nonbest_action_rank_idx).name)), ...
+    sprintf('C3: opt alpha\\{%s\\}\n+ best %s', optimal_alpha_str, char(action_scenarios(best_action_rank_idx).name))
+};
+set(gca, 'XTickLabel', comp_tick_labels, 'FontSize', 9);
+ylabel('Mean Recovery %', 'FontSize', 12);
+title('Comparison Experiment: Optimal Timing x Best Action', 'FontSize', 14);
+grid on;
+
+% 在柱子上方标注数值
+for k = 1:3
+    text(k, comparison_data(k) + max(abs(comparison_data)) * 0.03, ...
+        sprintf('%.1f%%', comparison_data(k)), ...
+        'HorizontalAlignment', 'center', 'FontSize', 11, 'FontWeight', 'bold');
+end
+
+% --- 图9: 对比实验详细折线图（按α值展开） ---
+% 展示最佳动作和非最佳动作在全部α值上的恢复比例，用竖线标示最佳/非最佳区域
+figure('Name', 'Fig9_Comparison_Detail', 'Position', [100, 100, 1100, 550]);
+hold on; grid on;
+
+plot(alpha_range, action_recovery_pct(:, best_action_rank_idx), '-o', 'LineWidth', 2.0, ...
+    'Color', [0.17 0.63 0.17], 'MarkerFaceColor', [0.17 0.63 0.17], 'MarkerSize', 7);
+plot(alpha_range, action_recovery_pct(:, nonbest_action_rank_idx), '--s', 'LineWidth', 2.0, ...
+    'Color', [0.85 0.33 0.10], 'MarkerFaceColor', [0.85 0.33 0.10], 'MarkerSize', 7);
+
+% 用阴影标注最佳α区域
+y_lim = ylim;
+for k = 1:numel(optimal_alpha_idx)
+    a_val = alpha_range(optimal_alpha_idx(k));
+    fill([a_val-0.04, a_val+0.04, a_val+0.04, a_val-0.04], ...
+        [y_lim(1), y_lim(1), y_lim(2), y_lim(2)], ...
+        [0.85 0.95 0.85], 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+end
+
+xlabel('\alpha', 'FontSize', 12);
+ylabel('Recovery %', 'FontSize', 12);
+title('Recovery % by Action across All \alpha (green shading = optimal \alpha region)', 'FontSize', 13);
+legend({sprintf('Best: %s', char(action_scenarios(best_action_rank_idx).name)), ...
+    sprintf('Non-best: %s', char(action_scenarios(nonbest_action_rank_idx).name)), ...
+    'Optimal \alpha region'}, 'Location', 'best', 'FontSize', 10);
+hold off;
+
+fprintf('\n========== 对比实验完成 ==========\n');
 
 %% ====================================================================
 %% 保存结果
