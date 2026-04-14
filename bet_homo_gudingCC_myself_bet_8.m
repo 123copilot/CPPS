@@ -145,7 +145,7 @@ assert(num_samples == size(failed_nodes_all{1}, 2), ...
 
 % R1: 使用 delay-adjusted R1，将时延效率 φ 纳入负荷保持率计算
 % R1_delay = (surviving_load × φ) / initial_total_load
-% 其中 φ = sum(P_actual) / sum(P_ref)，反映时延导致的发电出力折减
+% 其中 φ = min(1, sum(P_actual) / sum(P_ref))，反映时延导致的发电出力折减
 R1_mat = NaN(numA, num_samples, num_delay_scenarios);
 
 % R3 与延迟因素：从 delay_injection_log 提取
