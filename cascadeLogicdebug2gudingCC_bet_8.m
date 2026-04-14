@@ -94,6 +94,15 @@ parfor idxAlpha = 1:numA
         % 使得场景间的R1差异完全归因于延迟配置的不同
         rng(idxAlpha * 100000 + trial, 'twister');
 
+        % P1: 预生成随机数池，消除不同时延场景下的蝴蝶效应
+        % 对每个 (节点ID, 内循环轮次, 主循环轮次) 分配固定随机数，
+        % 确保不同时延场景下相同节点在相同决策位置使用相同的随机值
+        Vp = size(Ap, 1);
+        max_inner_rounds = 50;
+        max_main_rounds  = 50;
+        rand_forward  = rand(Vc, max_inner_rounds, max_main_rounds);
+        rand_backward = rand(Vp, max_inner_rounds, max_main_rounds);
+
         %% 2：级联失效主循环
         while main_loop_keep_iterating
             fprintf('\n========== 开始第 %d 轮级联失效迭代 ==========\n', main_iteration_count);
@@ -128,6 +137,7 @@ parfor idxAlpha = 1:numA
             %   内部循环(Inner Loop): 模拟"结构性"故障传播, 直到其自身稳定
 
             inner_loop_keep_iterating = true;
+            inner_iteration_count = 1;  % 每轮主循环重置内循环计数器
             while inner_loop_keep_iterating
 
                 fprintf('\n========== 开始第 %d 轮结构性故障传播迭代 ==========\n', inner_iteration_count);
@@ -193,7 +203,7 @@ parfor idxAlpha = 1:numA
                     node_p = find(current_A_pc(:, node_c) == 1);
                     if ~isempty(node_p) && ~any(failed_power_nodes == node_p)
                         % 进行一次随机"抽签"
-                        if rand < propagation_probability
+                        if rand_forward(node_c, inner_iteration_count, main_iteration_count) < propagation_probability
                             % 将该电力节点加入失效列表
                             potential_power_failures = [potential_power_failures; node_p];
                             failed_power_nodes = unique([failed_power_nodes; potential_power_failures]);
@@ -267,7 +277,7 @@ parfor idxAlpha = 1:numA
                     node_c_2 = find(current_A_pc(node_p_2, :) == 1);
                     if current_isCC(node_c_2), continue; end
                     if ~isempty(node_c_2) && ~any(failed_cyber_nodes == node_c_2) % 只对尚未失效的节点判断
-                        if rand < propagation_probability
+                        if rand_backward(node_p_2, inner_iteration_count, main_iteration_count) < propagation_probability
                             potential_cyber_failures = [potential_cyber_failures; node_c_2];
                             failed_cyber_nodes = unique([failed_cyber_nodes; potential_cyber_failures]);
                         end
