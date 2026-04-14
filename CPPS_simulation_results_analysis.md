@@ -179,7 +179,7 @@ R₃ 的计算基于最后一轮 `delay_injection_log` 中的 η 值（`bet_homo
 
 **答案：这是正确的物理行为。**
 
-代码第 43 行：
+代码 `cascadeLogicdebug2gudingCC_bet_8.m` 第 43 行：
 ```matlab
 Power_Edge_Capacity = (1+alpha) * P_branch;
 ```
@@ -376,6 +376,7 @@ rand_matrix_backward = rand(max_nodes, max_possible_rounds);  % 反向传播
 ```matlab
 % 替换 rand() < propagation_probability
 % 使用基于 (node_id, round, trial, alpha) 的确定性哈希
+% 使用互素的大素数减少哈希碰撞
 hash_val = mod(node_c * 7919 + main_iteration_count * 104729 + trial * 6271, 10000) / 10000;
 if hash_val < propagation_probability
     % 传播
@@ -423,12 +424,12 @@ eta = f_m * f_e;
 当总发电能力 Σ P_actual < Σ P_demand 时，按比例切除负荷：
 ```matlab
 total_gen = sum(mpc_sur.gen(online_gens, 2));
-total_demand = sum(mpc_sur.bus(:, 3));
+total_demand = sum(mpc_sur.bus(:, 3));  % 列3 = PD (有功负荷需求)
 if total_gen < total_demand
     shed_ratio = total_gen / total_demand;
     mpc_sur.bus(:, 3) = mpc_sur.bus(:, 3) * shed_ratio;
     % 被切除的负荷节点视为"功能性失效"
-    shed_threshold = 0.5;  % 切除超过50%负荷的节点视为失效
+    shed_threshold = 0.5;  % 可调参数：切除超过(1-threshold)负荷的节点视为失效
     for b = 1:size(mpc_sur.bus, 1)
         if mpc_sur.bus(b, 3) < mpc.bus(b, 3) * shed_threshold
             failed_power_nodes = unique([failed_power_nodes; b]);
