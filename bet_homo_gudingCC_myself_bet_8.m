@@ -143,7 +143,9 @@ assert(num_samples == size(failed_nodes_all{1}, 2), ...
     'num_samples 与级联数据不一致: num_samples=%d 但数据有 %d 列', ...
     num_samples, size(failed_nodes_all{1}, 2));
 
-% R1: 直接用 failed_power_nodes 计算（延迟已影响级联轨迹）
+% R1: 使用 delay-adjusted R1，将时延效率 φ 纳入负荷保持率计算
+% R1_delay = (surviving_load × φ) / initial_total_load
+% 其中 φ = min(1, sum(P_actual) / sum(P_ref))，反映时延导致的发电出力折减
 R1_mat = NaN(numA, num_samples, num_delay_scenarios);
 
 % R3 与延迟因素：从 delay_injection_log 提取
@@ -167,11 +169,38 @@ for idxScenario = 1:num_delay_scenarios
         for trial = 1:num_samples
             failed_pn = failed_nodes_all{idxScenario}{idxAlpha, trial};
 
-            % R1：存活负荷 / 初始负荷（延迟已在级联中生效）
-            R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
-
             % 从 round_log 中提取逐轮信息
             round_logs = round_log_all{idxScenario}{idxAlpha, trial};
+
+            % R1：使用 delay-adjusted 计算，将时延效率纳入负荷保持率
+            if ~isempty(round_logs)
+                last_rl_for_r1 = round_logs{end};
+                if isfield(last_rl_for_r1, 'delay_injection_log') && ~isempty(last_rl_for_r1.delay_injection_log.eta)
+                    dil_r1 = last_rl_for_r1.delay_injection_log;
+                    % 构造 P_ref 和 P_actual 向量用于 delay penalty
+                    P_ref_r1 = [];
+                    P_actual_r1 = [];
+                    for gk_r1 = 1:numel(dil_r1.eta)
+                        match_r1 = find(mpc.gen(:,1) == dil_r1.gen_bus(gk_r1), 1, 'first');
+                        if ~isempty(match_r1) && abs(mpc.gen(match_r1, 2)) > eps
+                            pg_ref_r1 = mpc.gen(match_r1, 2);
+                            P_ref_r1(end+1, 1) = pg_ref_r1; %#ok<AGROW>
+                            P_actual_r1(end+1, 1) = pg_ref_r1 * dil_r1.eta(gk_r1); %#ok<AGROW>
+                        end
+                    end
+                    if ~isempty(P_ref_r1) && sum(P_ref_r1) > 0
+                        R1_mat(idxAlpha, trial, idxScenario) = computeDelayAdjustedR1( ...
+                            initial_power_load, failed_pn, P_actual_r1, P_ref_r1);
+                    else
+                        R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
+                    end
+                else
+                    R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
+                end
+            else
+                R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
+            end
+
             if isempty(round_logs)
                 continue;
             end
@@ -193,8 +222,28 @@ for idxScenario = 1:num_delay_scenarios
                 round_n_fp(roundIdx) = numel(rl.failed_power_nodes);
                 round_n_fc(roundIdx) = numel(rl.failed_cyber_nodes);
 
-                % R1 per round
-                round_R1_values(roundIdx) = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
+                % R1 per round（delay-adjusted）
+                if isfield(rl, 'delay_injection_log') && ~isempty(rl.delay_injection_log.eta)
+                    dil_round = rl.delay_injection_log;
+                    P_ref_round = [];
+                    P_actual_round = [];
+                    for gk_round = 1:numel(dil_round.eta)
+                        match_round = find(mpc.gen(:,1) == dil_round.gen_bus(gk_round), 1, 'first');
+                        if ~isempty(match_round) && abs(mpc.gen(match_round, 2)) > eps
+                            pg_ref_round = mpc.gen(match_round, 2);
+                            P_ref_round(end+1, 1) = pg_ref_round; %#ok<AGROW>
+                            P_actual_round(end+1, 1) = pg_ref_round * dil_round.eta(gk_round); %#ok<AGROW>
+                        end
+                    end
+                    if ~isempty(P_ref_round) && sum(P_ref_round) > 0
+                        round_R1_values(roundIdx) = computeDelayAdjustedR1( ...
+                            initial_power_load, rl.failed_power_nodes, P_actual_round, P_ref_round);
+                    else
+                        round_R1_values(roundIdx) = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
+                    end
+                else
+                    round_R1_values(roundIdx) = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
+                end
 
                 % 从 delay_injection_log 提取延迟指标
                 if isfield(rl, 'delay_injection_log') && ~isempty(rl.delay_injection_log.eta)
@@ -401,8 +450,8 @@ end
 set(gca, 'XTick', group_centers, ...
     'XTickLabel', arrayfun(@(x) sprintf('\\alpha=%.1f', x), alpha_repr_vals, 'UniformOutput', false));
 
-ylabel('R_1');
-title(sprintf('R_1 Distribution by Delay Scenario (samples: %d)', num_samples));
+ylabel('R_1 (delay-adjusted)');
+title(sprintf('R_1 Distribution by Delay Scenario (delay-adjusted, samples: %d)', num_samples));
 ylim([0 1.05]);
 
 % 手动 legend（因为 boxplot 的 legend 不直观）
@@ -434,8 +483,8 @@ figure('Name', 'Fig2_R1_vs_alpha');
 hold on; grid on;
 ylim([0 1.05]);
 xlabel('\alpha');
-ylabel('R_1');
-title(sprintf('R_1 vs. \\alpha (IQR-trimmed mean from Box Plot, attack: %s, samples: %d, p=%.2f)', ...
+ylabel('R_1 (delay-adjusted)');
+title(sprintf('R_1 vs. \\alpha (delay-adjusted IQR-trimmed mean, attack: %s, samples: %d, p=%.2f)', ...
     attackMode, num_samples, propagation_probability));
 for idxScenario = 1:num_delay_scenarios
     plot(alpha_range, trimmed_mean_R1(:, idxScenario), '-o', 'LineWidth', 1.5, ...
@@ -592,7 +641,7 @@ for ai = 1:num_actions
     fprintf('\n===== 动作 %d/%d: %s (%s) =====\n', ...
         ai, num_actions, action_name, action_scenarios(ai).description);
 
-    [~, ~, ~, failed_power_nodes_action, ~] = ...
+    [~, ~, ~, failed_power_nodes_action, round_log_action] = ...
         cascadeLogicdebug2gudingCC_bet_8(...
             mpc, Vc, Ap, Ac_cell, A_pc_cell, propagation_probability, ...
             P_branch, betC_cell, betCE_cell, info_pool_cell, attackMode, ...
@@ -601,7 +650,34 @@ for ai = 1:num_actions
     for idxAlpha = 1:numA
         for trial = 1:num_samples
             failed_pn = failed_power_nodes_action{idxAlpha, trial};
-            R1_action_mat(idxAlpha, trial, ai) = computeR1LoadRatio(initial_power_load, failed_pn);
+            % 使用 delay-adjusted R1（与主实验一致）
+            action_round_logs = round_log_action{idxAlpha, trial};
+            if ~isempty(action_round_logs)
+                last_rl_action = action_round_logs{end};
+                if isfield(last_rl_action, 'delay_injection_log') && ~isempty(last_rl_action.delay_injection_log.eta)
+                    dil_action = last_rl_action.delay_injection_log;
+                    P_ref_action = [];
+                    P_actual_action = [];
+                    for gk_a = 1:numel(dil_action.eta)
+                        match_a = find(mpc.gen(:,1) == dil_action.gen_bus(gk_a), 1, 'first');
+                        if ~isempty(match_a) && abs(mpc.gen(match_a, 2)) > eps
+                            pg_ref_a = mpc.gen(match_a, 2);
+                            P_ref_action(end+1, 1) = pg_ref_a; %#ok<AGROW>
+                            P_actual_action(end+1, 1) = pg_ref_a * dil_action.eta(gk_a); %#ok<AGROW>
+                        end
+                    end
+                    if ~isempty(P_ref_action) && sum(P_ref_action) > 0
+                        R1_action_mat(idxAlpha, trial, ai) = computeDelayAdjustedR1( ...
+                            initial_power_load, failed_pn, P_actual_action, P_ref_action);
+                    else
+                        R1_action_mat(idxAlpha, trial, ai) = computeR1LoadRatio(initial_power_load, failed_pn);
+                    end
+                else
+                    R1_action_mat(idxAlpha, trial, ai) = computeR1LoadRatio(initial_power_load, failed_pn);
+                end
+            else
+                R1_action_mat(idxAlpha, trial, ai) = computeR1LoadRatio(initial_power_load, failed_pn);
+            end
         end
     end
 
@@ -708,8 +784,8 @@ figure('Name', 'Fig5_Sensitivity_R1_vs_alpha', 'Position', [100, 100, 1200, 600]
 hold on; grid on;
 ylim([0 1.05]);
 xlabel('\alpha', 'FontSize', 12);
-ylabel('R_1 (IQR-trimmed mean)', 'FontSize', 12);
-title(sprintf('Sensitivity Analysis: R_1 vs. \\alpha (samples: %d)', num_samples), 'FontSize', 14);
+ylabel('R_1 (delay-adjusted, IQR-trimmed mean)', 'FontSize', 12);
+title(sprintf('Sensitivity Analysis: R_1 vs. \\alpha (delay-adjusted, samples: %d)', num_samples), 'FontSize', 14);
 
 for si = 1:num_compare_scenarios
     plot(alpha_range, all_trimmed(:, si), sensitivity_styles{si}, ...
