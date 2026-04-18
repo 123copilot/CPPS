@@ -474,14 +474,14 @@ for ai = 1:numel(alpha_repr_idx)
     end
 end
 
-% --- 图2: R1 vs alpha 多场景对比（基于Box Plot数据的IQR截尾均值） ---
-% 从上方箱线图的原始数据中，取IQR范围内的试验取均值，绘制折线图
+% --- 图2: R1 vs alpha 多场景对比（基于Box Plot数据的Q25-Q75箱体截尾均值） ---
+% 从上方箱线图的原始数据中，取Q25-Q75箱体范围内的试验取均值，绘制折线图
 figure('Name', 'Fig2_R1_vs_alpha');
 hold on; grid on;
 ylim([0 1.05]);
 xlabel('\alpha');
 ylabel('R_1 (delay-adjusted)');
-title(sprintf('R_1 vs. \\alpha (delay-adjusted IQR-trimmed mean, attack: %s, samples: %d, p=%.2f)', ...
+title(sprintf('R_1 vs. \\alpha (delay-adjusted Q25-Q75 trimmed mean, attack: %s, samples: %d, p=%.2f)', ...
     attackMode, num_samples, propagation_probability));
 for idxScenario = 1:num_delay_scenarios
     plot(alpha_range, trimmed_mean_R1(:, idxScenario), '-o', 'LineWidth', 1.5, ...
@@ -828,7 +828,7 @@ figure('Name', 'Fig5_Sensitivity_R1_vs_alpha', 'Position', [100, 100, 1200, 600]
 hold on; grid on;
 ylim([0 1.05]);
 xlabel('\alpha', 'FontSize', 12);
-ylabel('R_1 (delay-adjusted, IQR-trimmed mean)', 'FontSize', 12);
+ylabel('R_1 (delay-adjusted, Q25-Q75 trimmed mean)', 'FontSize', 12);
 title(sprintf('Sensitivity Analysis: R_1 vs. \\alpha (delay-adjusted, samples: %d)', num_samples), 'FontSize', 14);
 
 for si = 1:num_compare_scenarios
@@ -880,127 +880,188 @@ end
 %% 对比实验：验证"最佳时间段 × 最佳动作"的协同效果
 %% ====================================================================
 % 设计思路：
-%   前面的热力图告诉我们 WHEN —— 在哪些α值（系统状态）下时延危害最大
-%   敏感性实验告诉我们 HOW —— 哪些工程动作最有效
-%   对比实验将两者结合，证明只有"在最佳时间段采取最佳动作"才能获得最大收益
+%   图4热力图告诉我们 WHEN —— 在哪些Cascade Round（级联轮次）时延危害最大
+%   图7排名告诉我们 HOW —— 哪些工程动作最有效
+%   对比实验将两者结合，用2×2设计证明"在最佳时间采取最佳动作"才能获得最大收益
 %
-% 三组对比条件：
-%   C1: 非最佳α区域 + 最佳动作 → 效果一般（时延本身在该区域影响不大）
-%   C2: 最佳α区域 + 非最佳动作 → 效果中等（找对了问题，但方法不是最优）
-%   C3: 最佳α区域 + 最佳动作   → 效果最好（找对问题 + 最优方法）
+% 四组对比条件（基于Cascade Round作为时间维度）：
+%   C1: 最佳时间（delay penalty最大的轮次） + 最佳动作 → 效果最好
+%   C2: 最佳时间 + 最差动作 → 中等偏低
+%   C3: 最差时间（delay penalty最小的轮次） + 最佳动作 → 中等偏高
+%   C4: 最差时间 + 最差动作 → 效果最差
 
-fprintf('\n========== 对比实验: 最佳时间段 x 最佳动作 ==========\n');
+fprintf('\n========== 对比实验: 最佳时间(Cascade Round) x 最佳动作 ==========\n');
 
-% --- 从R1差距确定最佳/非最佳α区域 ---
-% gap = R1_nodelay - R1_heavy（第638行已计算）
-% gap(idxAlpha) 越大 → 时延危害越大 → 这是"最佳干预时间段"
-[sorted_gap, gap_sort_idx] = sort(gap, 'descend');
+% --- 从热力图确定最佳/最差干预时间（级联轮次） ---
+% delta_delay_heatmap(round, alpha) = R1_no_delay(round, alpha) - R1_heavy(round, alpha)
+% 对每个round，计算其跨alpha平均delay penalty
+mean_penalty_per_round = mean(delta_delay_heatmap, 2, 'omitnan');  % (plot_max_round, 1)
 
-% 取约1/3的α值作为最佳/非最佳区域
-n_region = max(1, round(numA / 3));
-optimal_alpha_idx = gap_sort_idx(1:n_region);           % 延迟危害最大的α值
-nonoptimal_alpha_idx = gap_sort_idx(end-n_region+1:end); % 延迟危害最小的α值
+% 排除第1轮（初始攻击轮，无干预意义）
+valid_rounds = 2:plot_max_round;
+[~, sorted_round_idx] = sort(mean_penalty_per_round(valid_rounds), 'descend');
+sorted_valid_rounds = valid_rounds(sorted_round_idx);
 
-fprintf('最佳干预α区域（延迟危害最大）:\n');
-for k = 1:numel(optimal_alpha_idx)
-    fprintf('  alpha=%.1f, gap(R1)=%.4f\n', alpha_range(optimal_alpha_idx(k)), gap(optimal_alpha_idx(k)));
+% 取前1/3轮次为"最佳干预时间"，后1/3为"最差干预时间"
+n_round_region = max(1, round(numel(valid_rounds) / 3));
+best_rounds = sorted_valid_rounds(1:n_round_region);
+worst_rounds = sorted_valid_rounds(end-n_round_region+1:end);
+
+fprintf('最佳干预时间（delay penalty最大的轮次）:\n');
+for k = 1:numel(best_rounds)
+    fprintf('  Round %d, avg penalty=%.4f\n', best_rounds(k), mean_penalty_per_round(best_rounds(k)));
 end
-fprintf('非最佳α区域（延迟危害最小）:\n');
-for k = 1:numel(nonoptimal_alpha_idx)
-    fprintf('  alpha=%.1f, gap(R1)=%.4f\n', alpha_range(nonoptimal_alpha_idx(k)), gap(nonoptimal_alpha_idx(k)));
+fprintf('最差干预时间（delay penalty最小的轮次）:\n');
+for k = 1:numel(worst_rounds)
+    fprintf('  Round %d, avg penalty=%.4f\n', worst_rounds(k), mean_penalty_per_round(worst_rounds(k)));
 end
 
-% --- 从敏感性排名确定最佳/非最佳动作 ---
-best_action_rank_idx = sort_order(1);      % 排名第1的动作
-nonbest_action_rank_idx = sort_order(end); % 排名最后的动作
+% --- 从图7敏感性排名确定最佳/最差动作 ---
+best_action_idx = sort_order(1);      % 排名第1的动作
+worst_action_idx = sort_order(end);   % 排名最后的动作
+best_action_name = char(action_scenarios(best_action_idx).name);
+worst_action_name = char(action_scenarios(worst_action_idx).name);
 
-fprintf('最佳动作: %s (平均恢复 %.1f%%)\n', ...
-    char(action_scenarios(best_action_rank_idx).name), mean_recovery(best_action_rank_idx));
-fprintf('非最佳动作: %s (平均恢复 %.1f%%)\n', ...
-    char(action_scenarios(nonbest_action_rank_idx).name), mean_recovery(nonbest_action_rank_idx));
+fprintf('最佳动作: %s (平均恢复 %.1f%%)\n', best_action_name, mean_recovery(best_action_idx));
+fprintf('最差动作: %s (平均恢复 %.1f%%)\n', worst_action_name, mean_recovery(worst_action_idx));
 
-% --- 计算三组对比条件的恢复比例 ---
-% C1: 非最佳α区域 + 最佳动作
-C1_recovery_vals = action_recovery_pct(nonoptimal_alpha_idx, best_action_rank_idx);
-C1_mean = mean(C1_recovery_vals, 'omitnan');
+% --- 计算4组对比条件的恢复比例 ---
+% 对于每个(round, alpha)，恢复 = (R1_action(r,a) - R1_heavy(r,a)) / (R1_nodelay(r,a) - R1_heavy(r,a))
 
-% C2: 最佳α区域 + 非最佳动作
-C2_recovery_vals = action_recovery_pct(optimal_alpha_idx, nonbest_action_rank_idx);
-C2_mean = mean(C2_recovery_vals, 'omitnan');
+% C1: 最佳时间 + 最佳动作
+C1_vals = [];
+for r = best_rounds
+    for a = 1:numA
+        denom = mean_ts_R1(r, a, nodelay_idx) - mean_ts_R1(r, a, heavy_idx);
+        if denom > 0.001
+            numer = mean_ts_R1_action(r, a, best_action_idx) - mean_ts_R1(r, a, heavy_idx);
+            C1_vals(end+1) = numer / denom * 100; %#ok<AGROW>
+        end
+    end
+end
+C1_mean = mean(C1_vals, 'omitnan');
 
-% C3: 最佳α区域 + 最佳动作
-C3_recovery_vals = action_recovery_pct(optimal_alpha_idx, best_action_rank_idx);
-C3_mean = mean(C3_recovery_vals, 'omitnan');
+% C2: 最佳时间 + 最差动作
+C2_vals = [];
+for r = best_rounds
+    for a = 1:numA
+        denom = mean_ts_R1(r, a, nodelay_idx) - mean_ts_R1(r, a, heavy_idx);
+        if denom > 0.001
+            numer = mean_ts_R1_action(r, a, worst_action_idx) - mean_ts_R1(r, a, heavy_idx);
+            C2_vals(end+1) = numer / denom * 100; %#ok<AGROW>
+        end
+    end
+end
+C2_mean = mean(C2_vals, 'omitnan');
+
+% C3: 最差时间 + 最佳动作
+C3_vals = [];
+for r = worst_rounds
+    for a = 1:numA
+        denom = mean_ts_R1(r, a, nodelay_idx) - mean_ts_R1(r, a, heavy_idx);
+        if denom > 0.001
+            numer = mean_ts_R1_action(r, a, best_action_idx) - mean_ts_R1(r, a, heavy_idx);
+            C3_vals(end+1) = numer / denom * 100; %#ok<AGROW>
+        end
+    end
+end
+C3_mean = mean(C3_vals, 'omitnan');
+
+% C4: 最差时间 + 最差动作
+C4_vals = [];
+for r = worst_rounds
+    for a = 1:numA
+        denom = mean_ts_R1(r, a, nodelay_idx) - mean_ts_R1(r, a, heavy_idx);
+        if denom > 0.001
+            numer = mean_ts_R1_action(r, a, worst_action_idx) - mean_ts_R1(r, a, heavy_idx);
+            C4_vals(end+1) = numer / denom * 100; %#ok<AGROW>
+        end
+    end
+end
+C4_mean = mean(C4_vals, 'omitnan');
 
 fprintf('\n===== 对比实验结果 =====\n');
-fprintf('  C1 (非最佳alpha + 最佳动作 %s):  平均恢复 %.1f%%\n', ...
-    char(action_scenarios(best_action_rank_idx).name), C1_mean);
-fprintf('  C2 (最佳alpha + 非最佳动作 %s):  平均恢复 %.1f%%\n', ...
-    char(action_scenarios(nonbest_action_rank_idx).name), C2_mean);
-fprintf('  C3 (最佳alpha + 最佳动作 %s):    平均恢复 %.1f%%\n', ...
-    char(action_scenarios(best_action_rank_idx).name), C3_mean);
+fprintf('  C1 (最佳时间 + 最佳动作 %s):  平均恢复 %.1f%%\n', best_action_name, C1_mean);
+fprintf('  C2 (最佳时间 + 最差动作 %s):  平均恢复 %.1f%%\n', worst_action_name, C2_mean);
+fprintf('  C3 (最差时间 + 最佳动作 %s):  平均恢复 %.1f%%\n', best_action_name, C3_mean);
+fprintf('  C4 (最差时间 + 最差动作 %s):  平均恢复 %.1f%%\n', worst_action_name, C4_mean);
 
-% --- 图8: 对比实验柱状图 ---
-figure('Name', 'Fig8_Comparison_Experiment', 'Position', [100, 100, 900, 550]);
+% --- 图8: 对比实验柱状图（4组，基于cascade round作为时间维度） ---
+figure('Name', 'Fig8_Comparison_Experiment', 'Position', [100, 100, 1000, 550]);
 
-comparison_data = [C1_mean, C2_mean, C3_mean];
+comparison_data = [C1_mean, C2_mean, C3_mean, C4_mean];
 comparison_colors = [
-    0.60 0.60 0.60;   % C1: 灰色（一般）
-    0.93 0.69 0.13;   % C2: 金色（中等）
-    0.17 0.63 0.17;   % C3: 绿色（最佳）
+    0.17 0.63 0.17;   % C1: 绿色（最佳时间+最佳动作）
+    0.93 0.69 0.13;   % C2: 金色（最佳时间+最差动作）
+    0.30 0.75 0.93;   % C3: 青色（最差时间+最佳动作）
+    0.60 0.60 0.60;   % C4: 灰色（最差时间+最差动作）
 ];
 
 b_comp = bar(comparison_data, 'FaceColor', 'flat');
 b_comp.CData = comparison_colors;
 
-% 构造标签：显示条件和动作名称
-optimal_alpha_str = strjoin(arrayfun(@(x) sprintf('%.1f', x), ...
-    alpha_range(optimal_alpha_idx), 'UniformOutput', false), ',');
-nonoptimal_alpha_str = strjoin(arrayfun(@(x) sprintf('%.1f', x), ...
-    alpha_range(nonoptimal_alpha_idx), 'UniformOutput', false), ',');
+best_rounds_str = strjoin(arrayfun(@(x) sprintf('%d', x), best_rounds, 'UniformOutput', false), ',');
+worst_rounds_str = strjoin(arrayfun(@(x) sprintf('%d', x), worst_rounds, 'UniformOutput', false), ',');
 
 comp_tick_labels = {
-    sprintf('C1: non-opt alpha\\{%s\\}\n+ best %s', nonoptimal_alpha_str, char(action_scenarios(best_action_rank_idx).name)), ...
-    sprintf('C2: opt alpha\\{%s\\}\n+ non-best %s', optimal_alpha_str, char(action_scenarios(nonbest_action_rank_idx).name)), ...
-    sprintf('C3: opt alpha\\{%s\\}\n+ best %s', optimal_alpha_str, char(action_scenarios(best_action_rank_idx).name))
+    sprintf('C1: Best Time\nRound{%s}\n+ Best %s', best_rounds_str, best_action_name), ...
+    sprintf('C2: Best Time\nRound{%s}\n+ Worst %s', best_rounds_str, worst_action_name), ...
+    sprintf('C3: Worst Time\nRound{%s}\n+ Best %s', worst_rounds_str, best_action_name), ...
+    sprintf('C4: Worst Time\nRound{%s}\n+ Worst %s', worst_rounds_str, worst_action_name)
 };
 set(gca, 'XTickLabel', comp_tick_labels, 'FontSize', 9);
 ylabel('Mean Recovery %', 'FontSize', 12);
-title('Comparison Experiment: Optimal Timing x Best Action', 'FontSize', 14);
+title('Comparison: Optimal Timing (Cascade Round) x Best Action', 'FontSize', 14);
 grid on;
 
 % 在柱子上方标注数值
-for k = 1:3
+for k = 1:4
     text(k, comparison_data(k) + max(abs(comparison_data)) * 0.03, ...
         sprintf('%.1f%%', comparison_data(k)), ...
         'HorizontalAlignment', 'center', 'FontSize', 11, 'FontWeight', 'bold');
 end
 
-% --- 图9: 对比实验详细折线图（按α值展开） ---
-% 展示最佳动作和非最佳动作在全部α值上的恢复比例，用竖线标示最佳/非最佳区域
-figure('Name', 'Fig9_Comparison_Detail', 'Position', [100, 100, 1100, 550]);
-hold on; grid on;
+% --- 图9: 对比实验详细热力图（round × alpha 展开，最佳和最差动作恢复比例） ---
+figure('Name', 'Fig9_Comparison_Detail', 'Position', [100, 100, 1200, 500]);
 
-plot(alpha_range, action_recovery_pct(:, best_action_rank_idx), '-o', 'LineWidth', 2.0, ...
-    'Color', [0.17 0.63 0.17], 'MarkerFaceColor', [0.17 0.63 0.17], 'MarkerSize', 7);
-plot(alpha_range, action_recovery_pct(:, nonbest_action_rank_idx), '--s', 'LineWidth', 2.0, ...
-    'Color', [0.85 0.33 0.10], 'MarkerFaceColor', [0.85 0.33 0.10], 'MarkerSize', 7);
-
-% 用阴影标注最佳α区域
-y_lim = ylim;
-for k = 1:numel(optimal_alpha_idx)
-    a_val = alpha_range(optimal_alpha_idx(k));
-    fill([a_val-0.04, a_val+0.04, a_val+0.04, a_val-0.04], ...
-        [y_lim(1), y_lim(1), y_lim(2), y_lim(2)], ...
-        [0.85 0.95 0.85], 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+% 计算每个(round, alpha)的action恢复比例
+action_recovery_by_round_best = NaN(plot_max_round, numA);
+action_recovery_by_round_worst = NaN(plot_max_round, numA);
+for r = 1:plot_max_round
+    for a = 1:numA
+        denom = mean_ts_R1(r, a, nodelay_idx) - mean_ts_R1(r, a, heavy_idx);
+        if denom > 0.001
+            action_recovery_by_round_best(r, a) = ...
+                (mean_ts_R1_action(r, a, best_action_idx) - mean_ts_R1(r, a, heavy_idx)) / denom * 100;
+            action_recovery_by_round_worst(r, a) = ...
+                (mean_ts_R1_action(r, a, worst_action_idx) - mean_ts_R1(r, a, heavy_idx)) / denom * 100;
+        end
+    end
 end
 
-xlabel('\alpha', 'FontSize', 12);
-ylabel('Recovery %', 'FontSize', 12);
-title('Recovery % by Action across All \alpha (green shading = optimal \alpha region)', 'FontSize', 13);
-legend({sprintf('Best: %s', char(action_scenarios(best_action_rank_idx).name)), ...
-    sprintf('Non-best: %s', char(action_scenarios(nonbest_action_rank_idx).name)), ...
-    'Optimal \alpha region'}, 'Location', 'best', 'FontSize', 10);
+subplot(1,2,1);
+imagesc(1:plot_max_round, alpha_range, action_recovery_by_round_best');
+set(gca, 'YDir', 'normal');
+colorbar; colormap(hot);
+xlabel('Cascade Round'); ylabel('\alpha');
+title(sprintf('Recovery %%: Best Action (%s)', best_action_name));
+% 用竖线标注best_rounds
+hold on;
+for r = best_rounds
+    xline(r, 'g--', 'LineWidth', 1.5);
+end
+hold off;
+
+subplot(1,2,2);
+imagesc(1:plot_max_round, alpha_range, action_recovery_by_round_worst');
+set(gca, 'YDir', 'normal');
+colorbar; colormap(hot);
+xlabel('Cascade Round'); ylabel('\alpha');
+title(sprintf('Recovery %%: Worst Action (%s)', worst_action_name));
+hold on;
+for r = best_rounds
+    xline(r, 'g--', 'LineWidth', 1.5);
+end
 hold off;
 
 fprintf('\n========== 对比实验完成 ==========\n');
