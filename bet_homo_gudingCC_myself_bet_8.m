@@ -335,8 +335,8 @@ end
 mean_R1 = reshape(mean(R1_mat, 2, 'omitnan'), numA, num_delay_scenarios);
 mean_R3 = reshape(mean(R3_mat, 2, 'omitnan'), numA, num_delay_scenarios);
 
-% --- IQR截尾均值（用于R1折线图，抑制离群值对均值的污染） ---
-% 对每个(alpha, scenario)组合，仅对IQR范围内的试验取均值
+% --- 箱体截尾均值（用于R1折线图，仅使用Q25-Q75箱体范围内的数据） ---
+% 对每个(alpha, scenario)组合，仅对箱体[Q25, Q75]范围内的试验取均值
 trimmed_mean_R1 = NaN(numA, num_delay_scenarios);
 for idxScenario = 1:num_delay_scenarios
     for idxAlpha = 1:numA
@@ -347,10 +347,7 @@ for idxScenario = 1:num_delay_scenarios
         else
             q25 = prctile(r1_vals, 25);
             q75 = prctile(r1_vals, 75);
-            iqr_val = q75 - q25;
-            lower_fence = q25 - 1.5 * iqr_val;
-            upper_fence = q75 + 1.5 * iqr_val;
-            inliers = r1_vals(r1_vals >= lower_fence & r1_vals <= upper_fence);
+            inliers = r1_vals(r1_vals >= q25 & r1_vals <= q75);
             if isempty(inliers)
                 trimmed_mean_R1(idxAlpha, idxScenario) = median(r1_vals);
             else
@@ -634,6 +631,7 @@ assert(~isempty(heavy_base_idx),   '未找到 heavy 场景');
 
 % 预分配
 R1_action_mat = NaN(numA, num_samples, num_actions);
+round_log_action_all = cell(numA, num_samples, num_actions);
 
 for ai = 1:num_actions
     action_name = action_scenarios(ai).name;
@@ -652,6 +650,7 @@ for ai = 1:num_actions
             failed_pn = failed_power_nodes_action{idxAlpha, trial};
             % 使用 delay-adjusted R1（与主实验一致）
             action_round_logs = round_log_action{idxAlpha, trial};
+            round_log_action_all{idxAlpha, trial, ai} = action_round_logs;
             if ~isempty(action_round_logs)
                 last_rl_action = action_round_logs{end};
                 if isfield(last_rl_action, 'delay_injection_log') && ~isempty(last_rl_action.delay_injection_log.eta)
@@ -686,7 +685,55 @@ end
 
 fprintf('\n========== 全部动作场景完成 ==========\n');
 
-% --- IQR截尾均值（动作场景，算法与基线第289-312行完全一致） ---
+% --- 为动作场景计算逐轮R1时间序列（与基线场景LVCF对齐逻辑一致） ---
+mean_ts_R1_action = NaN(global_max_rounds, numA, num_actions);
+
+for ai = 1:num_actions
+    for idxAlpha = 1:numA
+        padded_R1_a = NaN(num_samples, global_max_rounds);
+        for trial = 1:num_samples
+            round_logs_a = round_log_action_all{idxAlpha, trial, ai};
+            if isempty(round_logs_a), continue; end
+            n_rounds_a = numel(round_logs_a);
+            for rIdx = 1:n_rounds_a
+                rl_a = round_logs_a{rIdx};
+                % 计算该轮的delay-adjusted R1（与主实验逻辑完全一致）
+                if isfield(rl_a, 'delay_injection_log') && ~isempty(rl_a.delay_injection_log.eta)
+                    dil_a = rl_a.delay_injection_log;
+                    P_ref_ra = []; P_actual_ra = [];
+                    for gk = 1:numel(dil_a.eta)
+                        match = find(mpc.gen(:,1) == dil_a.gen_bus(gk), 1, 'first');
+                        if ~isempty(match) && abs(mpc.gen(match, 2)) > eps
+                            pg_ref = mpc.gen(match, 2);
+                            P_ref_ra(end+1,1) = pg_ref; %#ok<AGROW>
+                            P_actual_ra(end+1,1) = pg_ref * dil_a.eta(gk); %#ok<AGROW>
+                        end
+                    end
+                    if ~isempty(P_ref_ra) && sum(P_ref_ra) > 0
+                        padded_R1_a(trial, rIdx) = computeDelayAdjustedR1(...
+                            initial_power_load, rl_a.failed_power_nodes, P_actual_ra, P_ref_ra);
+                    else
+                        padded_R1_a(trial, rIdx) = computeR1LoadRatio(initial_power_load, rl_a.failed_power_nodes);
+                    end
+                else
+                    padded_R1_a(trial, rIdx) = computeR1LoadRatio(initial_power_load, rl_a.failed_power_nodes);
+                end
+            end
+            % LVCF填充
+            if n_rounds_a < global_max_rounds
+                last_valid_idx = find(~isnan(padded_R1_a(trial,:)), 1, 'last');
+                if ~isempty(last_valid_idx)
+                    padded_R1_a(trial, n_rounds_a+1:global_max_rounds) = padded_R1_a(trial, last_valid_idx);
+                end
+            end
+        end
+        mean_ts_R1_action(:, idxAlpha, ai) = mean(padded_R1_a, 1, 'omitnan')';
+    end
+end
+
+fprintf('动作场景逐轮R1时间序列计算完成。\n');
+
+% --- 箱体截尾均值（动作场景，算法与基线完全一致，使用Q25-Q75箱体范围） ---
 trimmed_mean_R1_action = NaN(numA, num_actions);
 for ai = 1:num_actions
     for idxAlpha = 1:numA
@@ -697,10 +744,7 @@ for ai = 1:num_actions
         else
             q25 = prctile(r1_vals, 25);
             q75 = prctile(r1_vals, 75);
-            iqr_val = q75 - q25;
-            lower_fence = q25 - 1.5 * iqr_val;
-            upper_fence = q75 + 1.5 * iqr_val;
-            inliers = r1_vals(r1_vals >= lower_fence & r1_vals <= upper_fence);
+            inliers = r1_vals(r1_vals >= q25 & r1_vals <= q75);
             if isempty(inliers)
                 trimmed_mean_R1_action(idxAlpha, ai) = median(r1_vals);
             else
