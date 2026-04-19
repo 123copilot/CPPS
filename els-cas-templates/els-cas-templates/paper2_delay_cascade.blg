@@ -1,0 +1,47 @@
+This is BibTeX, Version 0.99d (TeX Live 2023/Debian)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: paper2_delay_cascade.aux
+The style file: cas-model2-names.bst
+Database file #1: paper2_refs.bib
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+You've used 16 entries,
+            2990 wiz_defined-function locations,
+            851 strings with 9215 characters,
+and the built_in function-call counts, 10898 in all, are:
+= -- 831
+> -- 424
+< -- 4
++ -- 163
+- -- 147
+* -- 1215
+:= -- 1582
+add.period$ -- 48
+call.type$ -- 16
+change.case$ -- 130
+chr.to.int$ -- 16
+cite$ -- 16
+duplicate$ -- 814
+empty$ -- 799
+format.name$ -- 199
+if$ -- 2001
+int.to.chr$ -- 1
+int.to.str$ -- 1
+missing$ -- 160
+newline$ -- 95
+num.names$ -- 64
+pop$ -- 289
+preamble$ -- 1
+purify$ -- 113
+quote$ -- 0
+skip$ -- 211
+stack$ -- 0
+substring$ -- 510
+swap$ -- 592
+text.length$ -- 0
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 144
+warning$ -- 0
+while$ -- 74
+width$ -- 0
+write$ -- 238
