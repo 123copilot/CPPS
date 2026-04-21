@@ -7,8 +7,11 @@ delay_scenarios = repmat(struct('name', "", 'cfg', struct(), 'scale', 0), 5, 1);
 % 1) baseline 对应基础时延配置本身（scale = 1.0）。
 % 2) medium 保持比 baseline 更强、比 heavy 更轻，便于与用户要求的
 %    no_delay -> light -> baseline -> medium -> heavy 顺序一致对比。
+% 3) scale 在 baseline -> medium -> heavy 之间采用非线性扩展，目的是让
+%    相邻场景的理论 φ ( = (1 - k_m·τ_m)(1 - k_e·τ_e) ) 间距足够大
+%    （≥ ~13%），避免 R1 箱线图上各场景中位数被 IQR 噪声完全淹没/反转。
 scenario_names = ["no_delay"; "light"; "baseline"; "medium"; "heavy"];
-scenario_scales = [0.0; 0.5; 1.0; 1.5; 2.0];
+scenario_scales = [0.0; 0.5; 1.0; 2.0; 3.5];
 
 for idx = 1:numel(scenario_names)
     scenario_cfg = base_delay_cfg;

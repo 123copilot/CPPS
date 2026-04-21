@@ -1,20 +1,20 @@
 function action_scenarios = createSensitivityActionConfigs(base_delay_cfg)
 %CREATESENSITIVITYACTIONCONFIGS 创建5个敏感性实验动作的时延配置。
 %
-% 每个动作基于 heavy 场景 (scale=2.0)，仅修改一个参数组，
+% 每个动作基于 heavy 场景 (scale=3.5)，仅修改一个参数组，
 % 用于评估哪个工程改进对系统韧性提升最大。
 %
 % 动作列表:
 %   A1: 链路带宽升级      10 Mbps -> 100 Mbps
 %   A2: 端点处理优化       tx/rx 延迟减半 (相对于heavy)
 %   A3: 转发优化           forward 延迟减半 (相对于heavy)
-%   A4: 测量接口加速       pb_to_noncc: 200ms -> 20ms
-%   A5: 执行接口加速       noncc_to_pb: 240ms -> 30ms
+%   A4: 测量接口加速       pb_to_noncc: 100ms*3.5=350ms -> 20ms
+%   A5: 执行接口加速       noncc_to_pb: 120ms*3.5=420ms -> 30ms
 %
 % 输入: base_delay_cfg - createDelayConfig() 返回的基础配置
 % 输出: action_scenarios - 结构体数组，每个元素包含 name, cfg, description
 
-heavy_scale = 2.0;
+heavy_scale = 3.5;
 
 % 先生成 heavy 基准配置
 heavy_cfg = base_delay_cfg;
@@ -60,20 +60,20 @@ action_scenarios(3).name = "A3_forwarding";
 action_scenarios(3).cfg = a3_cfg;
 action_scenarios(3).description = "Forwarding optimization: forward delay halved";
 
-% === A4: 测量接口加速 100ms(baseline)*2=200ms -> 20ms ===
+% === A4: 测量接口加速 100ms(baseline)*3.5=350ms -> 20ms ===
 a4_cfg = heavy_cfg;
 a4_cfg.power.pb_to_noncc_measurement_delay_s = 0.02;  % 直接设为20ms
 a4_cfg.power.measurement_delay_s = 0.02;
 action_scenarios(4).name = "A4_measurement";
 action_scenarios(4).cfg = a4_cfg;
-action_scenarios(4).description = "Measurement interface speedup: 200 -> 20 ms";
+action_scenarios(4).description = "Measurement interface speedup: 350 -> 20 ms";
 
-% === A5: 执行接口加速 120ms(baseline)*2=240ms -> 30ms ===
+% === A5: 执行接口加速 120ms(baseline)*3.5=420ms -> 30ms ===
 a5_cfg = heavy_cfg;
 a5_cfg.power.noncc_to_pb_execution_delay_s = 0.03;  % 直接设为30ms
 a5_cfg.power.execution_delay_s = 0.03;
 action_scenarios(5).name = "A5_execution";
 action_scenarios(5).cfg = a5_cfg;
-action_scenarios(5).description = "Execution interface speedup: 240 -> 30 ms";
+action_scenarios(5).description = "Execution interface speedup: 420 -> 30 ms";
 
 end
