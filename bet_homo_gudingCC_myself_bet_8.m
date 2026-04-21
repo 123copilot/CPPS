@@ -17,6 +17,24 @@ for idxScenario = 1:num_delay_scenarios
     scenario_labels(idxScenario) = delay_scenarios(idxScenario).name;
 end
 
+% 透明化：打印每个场景在"无 cyber 链路时延"假设下的理论 φ，
+% 用于事前校准 5 个场景在 R1 上的预期间距（cyber 链路时延会让实际 φ 略低）。
+fprintf('\n===== 各时延场景理论 φ (仅考虑物理时延项) =====\n');
+fprintf('  k_m=%.2f, k_e=%.2f, baseline τ_m=%.3fs, τ_e=%.3fs\n', ...
+    delay_cfg.power.measurement_sensitivity, delay_cfg.power.execution_sensitivity, ...
+    delay_cfg.power.pb_to_noncc_measurement_delay_s, delay_cfg.power.noncc_to_pb_execution_delay_s);
+for idxScenario = 1:num_delay_scenarios
+    sc_cfg = delay_scenarios(idxScenario).cfg;
+    tau_m_th = sc_cfg.power.pb_to_noncc_measurement_delay_s;
+    tau_e_th = sc_cfg.power.noncc_to_pb_execution_delay_s;
+    f_m_th = max(0, 1 - delay_cfg.power.measurement_sensitivity * tau_m_th);
+    f_e_th = max(0, 1 - delay_cfg.power.execution_sensitivity * tau_e_th);
+    phi_th = f_m_th * f_e_th;
+    fprintf('  %-10s: scale=%.2f, τ_m=%.3fs, τ_e=%.3fs, f_m=%.3f, f_e=%.3f, φ≈%.3f\n', ...
+        char(scenario_labels(idxScenario)), delay_scenarios(idxScenario).scale, ...
+        tau_m_th, tau_e_th, f_m_th, f_e_th, phi_th);
+end
+
 % 定义不同的连接模式和绘图样式
 plot_styles = ':^';
 line_colors = [0 0.6 0];
@@ -172,36 +190,17 @@ for idxScenario = 1:num_delay_scenarios
             % 从 round_log 中提取逐轮信息
             round_logs = round_log_all{idxScenario}{idxAlpha, trial};
 
-            % R1：使用 delay-adjusted 计算，将时延效率纳入负荷保持率
-            if ~isempty(round_logs)
-                last_rl_for_r1 = round_logs{end};
-                if isfield(last_rl_for_r1, 'delay_injection_log') && ~isempty(last_rl_for_r1.delay_injection_log.eta)
-                    dil_r1 = last_rl_for_r1.delay_injection_log;
-                    % 构造 P_ref 和 P_actual 向量用于 delay penalty
-                    P_ref_r1 = [];
-                    P_actual_r1 = [];
-                    for gk_r1 = 1:numel(dil_r1.eta)
-                        match_r1 = find(mpc.gen(:,1) == dil_r1.gen_bus(gk_r1), 1, 'first');
-                        if ~isempty(match_r1) && abs(mpc.gen(match_r1, 2)) > eps
-                            pg_ref_r1 = mpc.gen(match_r1, 2);
-                            P_ref_r1(end+1, 1) = pg_ref_r1; %#ok<AGROW>
-                            P_actual_r1(end+1, 1) = pg_ref_r1 * dil_r1.eta(gk_r1); %#ok<AGROW>
-                        end
-                    end
-                    if ~isempty(P_ref_r1) && sum(P_ref_r1) > 0
-                        R1_mat(idxAlpha, trial, idxScenario) = computeDelayAdjustedR1( ...
-                            initial_power_load, failed_pn, P_actual_r1, P_ref_r1);
-                    else
-                        R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
-                    end
-                else
-                    R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
-                end
-            else
-                R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
-            end
+            % R1：使用 delay-adjusted 计算，但 φ 改为"全程加权 φ_traj"，
+            % 即对该 trial 的所有级联轮次累计 (P_ref, P_actual)，避免只取最后一轮
+            % 时由于幸存发电机数极少导致的高方差/反转。
+            % φ_traj = (Σ_round Σ_g P_ref_g_round · η_g_round) / (Σ_round Σ_g P_ref_g_round)
+            % 实际计算逻辑：累加 P_ref/P_actual 之后调一次 computeDelayAdjustedR1，
+            % 利用其内部公式 R1 = surviving_load * (sum(P_actual)/sum(P_ref)) / total_load 一次成型。
+            P_ref_traj = [];
+            P_actual_traj = [];
 
             if isempty(round_logs)
+                R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
                 continue;
             end
 
@@ -238,6 +237,9 @@ for idxScenario = 1:num_delay_scenarios
                     if ~isempty(P_ref_round) && sum(P_ref_round) > 0
                         round_R1_values(roundIdx) = computeDelayAdjustedR1( ...
                             initial_power_load, rl.failed_power_nodes, P_actual_round, P_ref_round);
+                        % 追加到全程轨迹累计向量，用于 R1_mat 的 φ_traj 计算
+                        P_ref_traj = [P_ref_traj; P_ref_round]; %#ok<AGROW>
+                        P_actual_traj = [P_actual_traj; P_actual_round]; %#ok<AGROW>
                     else
                         round_R1_values(roundIdx) = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
                     end
@@ -289,6 +291,16 @@ for idxScenario = 1:num_delay_scenarios
             round_ts_unreachable_cell{idxAlpha, trial, idxScenario} = round_unreachable_values;
             round_ts_n_failed_power_cell{idxAlpha, trial, idxScenario} = round_n_fp;
             round_ts_n_failed_cyber_cell{idxAlpha, trial, idxScenario} = round_n_fc;
+
+            % 用全程累计 (P_ref_traj, P_actual_traj) 一次性算 trial 级 R1：
+            % 等价于 R1 = surviving_load * φ_traj / total_load，其中
+            % φ_traj 在所有轮次、所有发电机上以原始 P_ref 为权做加权平均。
+            if ~isempty(P_ref_traj) && sum(P_ref_traj) > 0
+                R1_mat(idxAlpha, trial, idxScenario) = computeDelayAdjustedR1( ...
+                    initial_power_load, failed_pn, P_actual_traj, P_ref_traj);
+            else
+                R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
+            end
 
             % R3：基于最后一轮的 delay_injection_log
             last_rl = round_logs{end};
@@ -457,8 +469,69 @@ for s = 1:num_delay_scenarios
     legend_handles(s) = patch(NaN, NaN, scenario_colors(s, :), ...
         'FaceAlpha', 0.4, 'EdgeColor', scenario_colors(s, :));
 end
-legend(legend_handles, cellstr(scenario_labels), 'Location', 'best');
+% 转义下划线，避免 'no_delay' 显示成 'no₄elay'
+legend_labels_disp = strrep(cellstr(scenario_labels), '_', '\_');
+legend(legend_handles, legend_labels_disp, 'Location', 'best');
 hold off;
+
+% --- 图1b: ΔR1 配对差箱线图（与 no_delay 同 trial 配对作差，消去 cascade 路径噪声） ---
+% 设计动机：根因 B（不同时延场景在第 2 轮起 cascade 路径分叉）会让同一 (α, trial)
+% 在不同场景下的绝对 R1 出现大幅波动，掩盖 5 个场景应有的单调差。
+% 作"同 trial 配对差" ΔR1 = R1_no_delay - R1_scenario 后，
+% 同源拓扑/初始攻击/同 RNG seed 的影响被相减抵消，留下的就是"时延强度"对 R1 的
+% 边际效应。预期：no_delay 箱体恒为 0；其余 4 个场景中位数严格满足
+%   light < baseline < medium < heavy（数值越大代表被时延拖得越多）。
+nodelay_box_idx = find(strcmp(string(scenario_labels), "no_delay"), 1);
+if ~isempty(nodelay_box_idx)
+    bp_delta_data = [];
+    bp_delta_group_scenario = [];
+    bp_delta_group_alpha = [];
+    for ai = 1:numel(alpha_repr_idx)
+        idxA = alpha_repr_idx(ai);
+        r1_nd_trials = squeeze(R1_mat(idxA, :, nodelay_box_idx));  % 1 x num_samples
+        for idxS = 1:num_delay_scenarios
+            r1_sc_trials = squeeze(R1_mat(idxA, :, idxS));
+            % 同 trial 配对差：仅当两侧都非 NaN 时才纳入
+            valid_mask = ~isnan(r1_nd_trials) & ~isnan(r1_sc_trials);
+            if ~any(valid_mask), continue; end
+            delta_vals = r1_nd_trials(valid_mask) - r1_sc_trials(valid_mask);
+            n_valid = numel(delta_vals);
+            bp_delta_data = [bp_delta_data; delta_vals(:)]; %#ok<AGROW>
+            bp_delta_group_scenario = [bp_delta_group_scenario; repmat(idxS, n_valid, 1)]; %#ok<AGROW>
+            bp_delta_group_alpha = [bp_delta_group_alpha; repmat(ai, n_valid, 1)]; %#ok<AGROW>
+        end
+    end
+    bp_delta_position = (bp_delta_group_alpha - 1) * (num_delay_scenarios + 1) + bp_delta_group_scenario;
+
+    figure('Name', 'Fig1b_DeltaR1_BoxPlot', 'Position', [100, 100, 1600, 500]);
+    boxplot(bp_delta_data, bp_delta_position, ...
+        'Widths', 0.6, 'Symbol', '.', 'OutlierSize', 3);
+    hold on; grid on;
+    h_delta = findobj(gca, 'Tag', 'Box');
+    box_pos_delta = zeros(numel(h_delta), 1);
+    for bi = 1:numel(h_delta)
+        box_pos_delta(bi) = mean(get(h_delta(bi), 'XData'));
+    end
+    [~, sort_idx_delta] = sort(box_pos_delta);
+    h_delta = h_delta(sort_idx_delta);
+    for bi = 1:numel(h_delta)
+        s_idx = mod(bi - 1, num_delay_scenarios) + 1;
+        patch(get(h_delta(bi), 'XData'), get(h_delta(bi), 'YData'), ...
+            scenario_colors(s_idx, :), 'FaceAlpha', 0.4);
+    end
+    set(gca, 'XTick', group_centers, ...
+        'XTickLabel', arrayfun(@(x) sprintf('\\alpha=%.1f', x), alpha_repr_vals, 'UniformOutput', false));
+    yline(0, 'k--', 'LineWidth', 1);
+    ylabel('\DeltaR_1 = R_1^{no\_delay} - R_1^{scenario}  (paired per trial)');
+    title(sprintf('\\DeltaR_1 Distribution (paired with no\\_delay, samples: %d)', num_samples));
+    legend_handles_delta = gobjects(num_delay_scenarios, 1);
+    for s = 1:num_delay_scenarios
+        legend_handles_delta(s) = patch(NaN, NaN, scenario_colors(s, :), ...
+            'FaceAlpha', 0.4, 'EdgeColor', scenario_colors(s, :));
+    end
+    legend(legend_handles_delta, legend_labels_disp, 'Location', 'best');
+    hold off;
+end
 
 % 打印全部 (α, scenario) 的 R1 分布统计
 fprintf('\n===== R1 分布统计（全部 α 值） =====\n');
@@ -487,7 +560,7 @@ for idxScenario = 1:num_delay_scenarios
     plot(alpha_range, trimmed_mean_R1(:, idxScenario), '-o', 'LineWidth', 1.5, ...
         'Color', scenario_colors(idxScenario, :), 'MarkerFaceColor', scenario_colors(idxScenario, :));
 end
-legend(cellstr(scenario_labels), 'Location', 'best');
+legend(strrep(cellstr(scenario_labels), '_', '\_'), 'Location', 'best');
 hold off;
 
 % --- 图3: R3 vs alpha 多场景对比 ---
@@ -501,7 +574,7 @@ for idxScenario = 1:num_delay_scenarios
     plot(alpha_range, mean_R3(:, idxScenario), '-o', 'LineWidth', 1.5, ...
         'Color', scenario_colors(idxScenario, :), 'MarkerFaceColor', scenario_colors(idxScenario, :));
 end
-legend(cellstr(scenario_labels), 'Location', 'best');
+legend(strrep(cellstr(scenario_labels), '_', '\_'), 'Location', 'best');
 hold off;
 
 %% ====================================================================
@@ -648,32 +721,33 @@ for ai = 1:num_actions
     for idxAlpha = 1:numA
         for trial = 1:num_samples
             failed_pn = failed_power_nodes_action{idxAlpha, trial};
-            % 使用 delay-adjusted R1（与主实验一致）
+            % 使用 delay-adjusted R1（与主实验一致：φ 改为全程加权 φ_traj，
+            % 而非仅取最后一轮，避免末轮幸存发电机过少导致的高方差/反转）
             action_round_logs = round_log_action{idxAlpha, trial};
             round_log_action_all{idxAlpha, trial, ai} = action_round_logs;
-            if ~isempty(action_round_logs)
-                last_rl_action = action_round_logs{end};
-                if isfield(last_rl_action, 'delay_injection_log') && ~isempty(last_rl_action.delay_injection_log.eta)
-                    dil_action = last_rl_action.delay_injection_log;
-                    P_ref_action = [];
-                    P_actual_action = [];
-                    for gk_a = 1:numel(dil_action.eta)
-                        match_a = find(mpc.gen(:,1) == dil_action.gen_bus(gk_a), 1, 'first');
+            if isempty(action_round_logs)
+                R1_action_mat(idxAlpha, trial, ai) = computeR1LoadRatio(initial_power_load, failed_pn);
+                continue;
+            end
+            P_ref_traj_a = [];
+            P_actual_traj_a = [];
+            for rIdx_a = 1:numel(action_round_logs)
+                rl_aa = action_round_logs{rIdx_a};
+                if isfield(rl_aa, 'delay_injection_log') && ~isempty(rl_aa.delay_injection_log.eta)
+                    dil_aa = rl_aa.delay_injection_log;
+                    for gk_a = 1:numel(dil_aa.eta)
+                        match_a = find(mpc.gen(:,1) == dil_aa.gen_bus(gk_a), 1, 'first');
                         if ~isempty(match_a) && abs(mpc.gen(match_a, 2)) > eps
                             pg_ref_a = mpc.gen(match_a, 2);
-                            P_ref_action(end+1, 1) = pg_ref_a; %#ok<AGROW>
-                            P_actual_action(end+1, 1) = pg_ref_a * dil_action.eta(gk_a); %#ok<AGROW>
+                            P_ref_traj_a(end+1, 1) = pg_ref_a; %#ok<AGROW>
+                            P_actual_traj_a(end+1, 1) = pg_ref_a * dil_aa.eta(gk_a); %#ok<AGROW>
                         end
                     end
-                    if ~isempty(P_ref_action) && sum(P_ref_action) > 0
-                        R1_action_mat(idxAlpha, trial, ai) = computeDelayAdjustedR1( ...
-                            initial_power_load, failed_pn, P_actual_action, P_ref_action);
-                    else
-                        R1_action_mat(idxAlpha, trial, ai) = computeR1LoadRatio(initial_power_load, failed_pn);
-                    end
-                else
-                    R1_action_mat(idxAlpha, trial, ai) = computeR1LoadRatio(initial_power_load, failed_pn);
                 end
+            end
+            if ~isempty(P_ref_traj_a) && sum(P_ref_traj_a) > 0
+                R1_action_mat(idxAlpha, trial, ai) = computeDelayAdjustedR1( ...
+                    initial_power_load, failed_pn, P_actual_traj_a, P_ref_traj_a);
             else
                 R1_action_mat(idxAlpha, trial, ai) = computeR1LoadRatio(initial_power_load, failed_pn);
             end
@@ -836,7 +910,7 @@ for si = 1:num_compare_scenarios
         'LineWidth', sensitivity_widths(si), 'Color', sensitivity_colors(si, :), ...
         'MarkerFaceColor', sensitivity_colors(si, :), 'MarkerSize', 6);
 end
-legend(cellstr(all_compare_labels), 'Location', 'best', 'FontSize', 10);
+legend(strrep(cellstr(all_compare_labels), '_', '\_'), 'Location', 'best', 'FontSize', 10);
 hold off;
 
 % --- 图6: 恢复比例热力图 (action × alpha) ---
