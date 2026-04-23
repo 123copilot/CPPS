@@ -14,6 +14,15 @@ failC_mat = zeros(numA, numel(A_pc_cell)); % 每个alpha对应100个结果
 cascade_round_log_cell = cell(numA, num_trials);
 failed_power_nodes_cell = cell(numA, num_trials);
 
+% η⁺ 模型所需：参考 Pg 的极值（方案 A 归一化分母）。在下方的
+% parfor 之前一次算清，由 parfor 自动作为广播变量传给所有 worker；
+% 同时保证整个仿真使用一致的归一化基准。
+P_g_ref_max_for_eta = max(mpc.gen(:, 2));
+if ~(P_g_ref_max_for_eta > 0)
+    error('cascadeLogic:invalidPmax', ...
+        'mpc.gen(:,2) 的最大值必须 > 0 才能用于 η⁺ 归一化。');
+end
+
 
 %% --- 最外层 for 循环开始 ---
 parfor idxAlpha = 1:numA
@@ -528,9 +537,23 @@ parfor idxAlpha = 1:numA
                     tau_m_g = delay_cfg.power.pb_to_noncc_measurement_delay_s + cyber_up_d;
                     tau_e_g = delay_cfg.power.noncc_to_pb_execution_delay_s + cyber_down_d;
 
-                    [eta_g, ~, ~] = computePowerDelayEfficiency(tau_m_g, tau_e_g, ...
-                        delay_cfg.power.measurement_sensitivity, ...
-                        delay_cfg.power.execution_sensitivity);
+                    % --- 计算 η ：根据 delay_cfg.power.eta_model 分派 ---
+                    % 'etaplus' 路径需要总跳数与机组参考出力（方案 A 归一化）
+                    if isfield(delay_cfg.power, 'eta_model') && ...
+                            strcmpi(delay_cfg.power.eta_model, 'etaplus')
+                        % shortestpath 返回的 path 是节点序列，跳数 = 节点数 - 1
+                        n_hops_up   = max(0, numel(best_up_path_g)   - 1);
+                        n_hops_down = max(0, numel(best_down_path_g) - 1);
+                        n_hops_total_g = n_hops_up + n_hops_down;
+                        P_g_ref_i = mpc.gen(gIdx, 2);  % 原始参考有功（mpc 是函数输入，整个 cascade 仅写 mpc_sur，mpc 始终只读）
+                        eta_g = computeEtaPlus(tau_m_g, tau_e_g, ...
+                            n_hops_total_g, P_g_ref_i, P_g_ref_max_for_eta, delay_cfg);
+                    else
+                        % legacy 旧线性公式，用于回归对比
+                        [eta_g, ~, ~] = computePowerDelayEfficiency(tau_m_g, tau_e_g, ...
+                            delay_cfg.power.measurement_sensitivity, ...
+                            delay_cfg.power.execution_sensitivity);
+                    end
 
                     % 确保 eta 在 [0, 1] 范围内
                     eta_g = max(0, min(1, eta_g));
