@@ -19,20 +19,43 @@ end
 
 % 透明化：打印每个场景在"无 cyber 链路时延"假设下的理论 φ，
 % 用于事前校准 5 个场景在 R1 上的预期间距（cyber 链路时延会让实际 φ 略低）。
-fprintf('\n===== 各时延场景理论 φ (仅考虑物理时延项) =====\n');
-fprintf('  k_m=%.2f, k_e=%.2f, baseline τ_m=%.3fs, τ_e=%.3fs\n', ...
-    delay_cfg.power.measurement_sensitivity, delay_cfg.power.execution_sensitivity, ...
-    delay_cfg.power.pb_to_noncc_measurement_delay_s, delay_cfg.power.noncc_to_pb_execution_delay_s);
-for idxScenario = 1:num_delay_scenarios
-    sc_cfg = delay_scenarios(idxScenario).cfg;
-    tau_m_th = sc_cfg.power.pb_to_noncc_measurement_delay_s;
-    tau_e_th = sc_cfg.power.noncc_to_pb_execution_delay_s;
-    f_m_th = max(0, 1 - delay_cfg.power.measurement_sensitivity * tau_m_th);
-    f_e_th = max(0, 1 - delay_cfg.power.execution_sensitivity * tau_e_th);
-    phi_th = f_m_th * f_e_th;
-    fprintf('  %-10s: scale=%.2f, τ_m=%.3fs, τ_e=%.3fs, f_m=%.3f, f_e=%.3f, φ≈%.3f\n', ...
-        char(scenario_labels(idxScenario)), delay_scenarios(idxScenario).scale, ...
-        tau_m_th, tau_e_th, f_m_th, f_e_th, phi_th);
+use_etaplus_print = isfield(delay_cfg.power, 'eta_model') && ...
+    strcmpi(delay_cfg.power.eta_model, 'etaplus');
+if use_etaplus_print
+    ep_print = delay_cfg.power.eta_plus;
+    fprintf('\n===== 各时延场景理论 Φ_sat 上界 (η⁺ 模型) =====\n');
+    fprintf('  a_m=%.2f, a_e=%.2f, τ_m0=%.3fs, τ_e0=%.3fs\n', ...
+        ep_print.a_m, ep_print.a_e, ep_print.tau_m0, ep_print.tau_e0);
+    fprintf('  p_hop=%.3f, τ_crit_max=%.2fs, β=%.1f (Φ_loss/Φ_crit 取决于路径与机组)\n', ...
+        ep_print.p_hop, ep_print.tau_crit_max, ep_print.beta);
+    for idxScenario = 1:num_delay_scenarios
+        sc_cfg = delay_scenarios(idxScenario).cfg;
+        tau_m_th = sc_cfg.power.pb_to_noncc_measurement_delay_s;
+        tau_e_th = sc_cfg.power.noncc_to_pb_execution_delay_s;
+        ep_sc = sc_cfg.power.eta_plus;
+        tilde_m = max(0, tau_m_th - ep_sc.tau_m0);
+        tilde_e = max(0, tau_e_th - ep_sc.tau_e0);
+        phi_sat_th = exp(-ep_sc.a_m * tilde_m - ep_sc.a_e * tilde_e);
+        fprintf('  %-10s: scale=%.2f, τ_m=%.3fs, τ_e=%.3fs, Φ_sat≈%.3f\n', ...
+            char(scenario_labels(idxScenario)), delay_scenarios(idxScenario).scale, ...
+            tau_m_th, tau_e_th, phi_sat_th);
+    end
+else
+    fprintf('\n===== 各时延场景理论 φ (legacy 线性模型) =====\n');
+    fprintf('  k_m=%.2f, k_e=%.2f, baseline τ_m=%.3fs, τ_e=%.3fs\n', ...
+        delay_cfg.power.measurement_sensitivity, delay_cfg.power.execution_sensitivity, ...
+        delay_cfg.power.pb_to_noncc_measurement_delay_s, delay_cfg.power.noncc_to_pb_execution_delay_s);
+    for idxScenario = 1:num_delay_scenarios
+        sc_cfg = delay_scenarios(idxScenario).cfg;
+        tau_m_th = sc_cfg.power.pb_to_noncc_measurement_delay_s;
+        tau_e_th = sc_cfg.power.noncc_to_pb_execution_delay_s;
+        f_m_th = max(0, 1 - delay_cfg.power.measurement_sensitivity * tau_m_th);
+        f_e_th = max(0, 1 - delay_cfg.power.execution_sensitivity * tau_e_th);
+        phi_th = f_m_th * f_e_th;
+        fprintf('  %-10s: scale=%.2f, τ_m=%.3fs, τ_e=%.3fs, f_m=%.3f, f_e=%.3f, φ≈%.3f\n', ...
+            char(scenario_labels(idxScenario)), delay_scenarios(idxScenario).scale, ...
+            tau_m_th, tau_e_th, f_m_th, f_e_th, phi_th);
+    end
 end
 
 % 定义不同的连接模式和绘图样式
