@@ -429,141 +429,110 @@ disp(safety_level_table);
 %% ====================================================================
 % 出图顺序：箱线图(分布) → R1折线图(从箱线图数据取均值) → R3折线图 → 热力图(when)
 
-% --- 图1: R1 分布 Box Plot（先展示整体数据分布，揭示延迟对系统不确定性的影响） ---
-% 使用全部 α 值，完整展示随 α 变化的分布特征
-alpha_repr_vals = alpha_range;      % 全部11个α值
+% --- 图1: ΔR1 均值差柱状图（取代原 R1 箱线图，主攻 R1 单调性诊断） ---
+% 设计动机：原箱线图无法直接回答"R1 是否随时延加重而单调恶化"这一主要矛盾。
+% 改造为：每个 α 下展示 4 根柱子（light / baseline / medium / heavy），
+% 纵坐标 ΔR1 = mean(R_1^{no_delay}) - mean(R_1^{scenario})。
+% 预期：所有柱高 ≥ 0 且按 light < baseline < medium < heavy 单调递增。
+% 若任何柱高为负 => 代码逻辑有问题（time-delayed 场景反而比 no_delay 更好）。
+alpha_repr_vals = alpha_range;      % 全部 α 值
 alpha_repr_idx = 1:numA;            % 对应索引
 
-% 构造 box plot 数据：每组 = (α, scenario)
-bp_data = [];
-bp_group_scenario = [];
-bp_group_alpha = [];
+% 计算每个 (α, scenario) 的均值
+mean_R1_per_scenario = NaN(numA, num_delay_scenarios);
 for ai = 1:numel(alpha_repr_idx)
     idxA = alpha_repr_idx(ai);
     for idxS = 1:num_delay_scenarios
         r1_trials = R1_mat(idxA, :, idxS);
         r1_trials = r1_trials(~isnan(r1_trials));
-        n_valid = numel(r1_trials);
-        bp_data = [bp_data; r1_trials(:)]; %#ok<AGROW>
-        bp_group_scenario = [bp_group_scenario; repmat(idxS, n_valid, 1)]; %#ok<AGROW>
-        bp_group_alpha = [bp_group_alpha; repmat(ai, n_valid, 1)]; %#ok<AGROW>
-    end
-end
-
-% 组合分组标签：每个 box 由 (alpha_group, scenario) 唯一确定
-bp_position = (bp_group_alpha - 1) * (num_delay_scenarios + 1) + bp_group_scenario;
-
-figure('Name', 'Fig1_R1_BoxPlot', 'Position', [100, 100, 1600, 500]);
-boxplot(bp_data, bp_position, ...
-    'Widths', 0.6, 'Symbol', '.', 'OutlierSize', 3);
-hold on; grid on;
-
-% 给每组box上色（通过patch）
-h = findobj(gca, 'Tag', 'Box');
-% boxplot 从右到左创建 box handles，需要翻转
-box_positions = zeros(numel(h), 1);
-for bi = 1:numel(h)
-    box_positions(bi) = mean(get(h(bi), 'XData'));
-end
-[~, sort_idx] = sort(box_positions);
-h = h(sort_idx);
-for bi = 1:numel(h)
-    % 确定这个 box 属于哪个 scenario
-    s_idx = mod(bi - 1, num_delay_scenarios) + 1;
-    patch(get(h(bi), 'XData'), get(h(bi), 'YData'), ...
-        scenario_colors(s_idx, :), 'FaceAlpha', 0.4);
-end
-
-% X 轴标签：在每组中心位置标注 α 值
-group_centers = zeros(numel(alpha_repr_vals), 1);
-for ai = 1:numel(alpha_repr_vals)
-    group_centers(ai) = (ai - 1) * (num_delay_scenarios + 1) + (num_delay_scenarios + 1) / 2;
-end
-set(gca, 'XTick', group_centers, ...
-    'XTickLabel', arrayfun(@(x) sprintf('\\alpha=%.1f', x), alpha_repr_vals, 'UniformOutput', false));
-
-ylabel('R_1 (delay-adjusted)');
-title(sprintf('R_1 Distribution by Delay Scenario (delay-adjusted, samples: %d)', num_samples));
-ylim([0 1.05]);
-
-% 手动 legend（因为 boxplot 的 legend 不直观）
-legend_handles = gobjects(num_delay_scenarios, 1);
-for s = 1:num_delay_scenarios
-    legend_handles(s) = patch(NaN, NaN, scenario_colors(s, :), ...
-        'FaceAlpha', 0.4, 'EdgeColor', scenario_colors(s, :));
-end
-% 转义下划线，避免 'no_delay' 显示成 'no₄elay'
-legend_labels_disp = strrep(cellstr(scenario_labels), '_', '\_');
-legend(legend_handles, legend_labels_disp, 'Location', 'best');
-hold off;
-
-% --- 图1b: ΔR1 配对差箱线图（与 no_delay 同 trial 配对作差，消去 cascade 路径噪声） ---
-% 设计动机：根因 B（不同时延场景在第 2 轮起 cascade 路径分叉）会让同一 (α, trial)
-% 在不同场景下的绝对 R1 出现大幅波动，掩盖 5 个场景应有的单调差。
-% 作"同 trial 配对差" ΔR1 = R1_no_delay - R1_scenario 后，
-% 同源拓扑/初始攻击/同 RNG seed 的影响被相减抵消，留下的就是"时延强度"对 R1 的
-% 边际效应。预期：no_delay 箱体恒为 0；其余 4 个场景中位数严格满足
-%   light < baseline < medium < heavy（数值越大代表被时延拖得越多）。
-nodelay_box_idx = find(strcmp(string(scenario_labels), "no_delay"), 1);
-if ~isempty(nodelay_box_idx)
-    bp_delta_data = [];
-    bp_delta_group_scenario = [];
-    bp_delta_group_alpha = [];
-    for ai = 1:numel(alpha_repr_idx)
-        idxA = alpha_repr_idx(ai);
-        r1_nd_trials = squeeze(R1_mat(idxA, :, nodelay_box_idx));  % 1 x num_samples
-        for idxS = 1:num_delay_scenarios
-            r1_sc_trials = squeeze(R1_mat(idxA, :, idxS));
-            % 同 trial 配对差：仅当两侧都非 NaN 时才纳入
-            valid_mask = ~isnan(r1_nd_trials) & ~isnan(r1_sc_trials);
-            if ~any(valid_mask), continue; end
-            delta_vals = r1_nd_trials(valid_mask) - r1_sc_trials(valid_mask);
-            n_valid = numel(delta_vals);
-            bp_delta_data = [bp_delta_data; delta_vals(:)]; %#ok<AGROW>
-            bp_delta_group_scenario = [bp_delta_group_scenario; repmat(idxS, n_valid, 1)]; %#ok<AGROW>
-            bp_delta_group_alpha = [bp_delta_group_alpha; repmat(ai, n_valid, 1)]; %#ok<AGROW>
+        if ~isempty(r1_trials)
+            mean_R1_per_scenario(ai, idxS) = mean(r1_trials);
         end
     end
-    bp_delta_position = (bp_delta_group_alpha - 1) * (num_delay_scenarios + 1) + bp_delta_group_scenario;
-
-    figure('Name', 'Fig1b_DeltaR1_BoxPlot', 'Position', [100, 100, 1600, 500]);
-    boxplot(bp_delta_data, bp_delta_position, ...
-        'Widths', 0.6, 'Symbol', '.', 'OutlierSize', 3);
-    hold on; grid on;
-    h_delta = findobj(gca, 'Tag', 'Box');
-    box_pos_delta = zeros(numel(h_delta), 1);
-    for bi = 1:numel(h_delta)
-        box_pos_delta(bi) = mean(get(h_delta(bi), 'XData'));
-    end
-    [~, sort_idx_delta] = sort(box_pos_delta);
-    h_delta = h_delta(sort_idx_delta);
-    for bi = 1:numel(h_delta)
-        s_idx = mod(bi - 1, num_delay_scenarios) + 1;
-        patch(get(h_delta(bi), 'XData'), get(h_delta(bi), 'YData'), ...
-            scenario_colors(s_idx, :), 'FaceAlpha', 0.4);
-    end
-    set(gca, 'XTick', group_centers, ...
-        'XTickLabel', arrayfun(@(x) sprintf('\\alpha=%.1f', x), alpha_repr_vals, 'UniformOutput', false));
-    yline(0, 'k--', 'LineWidth', 1);
-    ylabel('\DeltaR_1 = R_1^{no\_delay} - R_1^{scenario}  (paired per trial)');
-    title(sprintf('\\DeltaR_1 Distribution (paired with no\\_delay, samples: %d)', num_samples));
-    legend_handles_delta = gobjects(num_delay_scenarios, 1);
-    for s = 1:num_delay_scenarios
-        legend_handles_delta(s) = patch(NaN, NaN, scenario_colors(s, :), ...
-            'FaceAlpha', 0.4, 'EdgeColor', scenario_colors(s, :));
-    end
-    legend(legend_handles_delta, legend_labels_disp, 'Location', 'best');
-    hold off;
 end
 
-% 打印全部 (α, scenario) 的 R1 分布统计
-fprintf('\n===== R1 分布统计（全部 α 值） =====\n');
+% 定位 no_delay 列与其它 4 个时延场景列
+nodelay_idx = find(strcmp(string(scenario_labels), "no_delay"), 1);
+if isempty(nodelay_idx)
+    error('未找到 no_delay 场景，无法计算 ΔR1。');
+end
+delay_scenario_idx = setdiff(1:num_delay_scenarios, nodelay_idx);
+delay_scenario_labels = scenario_labels(delay_scenario_idx);
+
+% ΔR1 = mean(R1_no_delay) - mean(R1_scenario)
+% 维度：numA x numel(delay_scenario_idx)
+delta_R1_bar = mean_R1_per_scenario(:, nodelay_idx) - mean_R1_per_scenario(:, delay_scenario_idx);
+
+% 转义下划线（用于 legend / 标签显示，避免下划线被解析为下标）
+legend_labels_disp = strrep(cellstr(scenario_labels), '_', '\_');
+delay_legend_labels_disp = legend_labels_disp(delay_scenario_idx);
+
+figure('Name', 'Fig1_DeltaR1_Bar', 'Position', [100, 100, 1600, 500]);
+hb = bar(alpha_repr_vals, delta_R1_bar, 'grouped');
+hold on; grid on;
+% 上色：复用 scenario_colors 中对应延迟场景的颜色
+for s = 1:numel(hb)
+    hb(s).FaceColor = scenario_colors(delay_scenario_idx(s), :);
+    hb(s).FaceAlpha = 0.85;
+    hb(s).EdgeColor = [0.2 0.2 0.2];
+end
+yline(0, 'k--', 'LineWidth', 1);
+xlabel('\alpha');
+ylabel('\DeltaR_1 = mean(R_1^{no\_delay}) - mean(R_1^{scenario})');
+title(sprintf('\\DeltaR_1 vs \\alpha by Delay Scenario (samples per cell: %d)', num_samples));
+legend(hb, delay_legend_labels_disp, 'Location', 'best');
+% 在负值柱子顶部标注，便于一眼定位代码异常位置
+for s = 1:numel(hb)
+    xs = hb(s).XEndPoints;
+    ys = hb(s).YEndPoints;
+    for k = 1:numel(xs)
+        if ~isnan(ys(k)) && ys(k) < 0
+            text(xs(k), ys(k), '!', ...
+                'HorizontalAlignment', 'center', ...
+                'VerticalAlignment', 'top', ...
+                'Color', 'r', 'FontWeight', 'bold', 'FontSize', 12);
+        end
+    end
+end
+hold off;
+
+% 打印全部 (α, scenario) 的 R1 均值与 ΔR1，便于直接定位负值（异常）的 (α, scenario)
+fprintf('\n===== R1 均值 & ΔR1 = mean(R1_no_delay) - mean(R1_scenario) =====\n');
+header_parts = {'alpha', 'mean_R1_no_delay'};
+for s = 1:numel(delay_scenario_idx)
+    sc_name = char(delay_scenario_labels(s));
+    header_parts{end+1} = sprintf('mean_R1_%s', sc_name); %#ok<AGROW>
+    header_parts{end+1} = sprintf('dR1_%s', sc_name); %#ok<AGROW>
+end
+fprintf('%s\n', strjoin(header_parts, ' | '));
+for ai = 1:numel(alpha_repr_idx)
+    line_parts = {sprintf('%.2f', alpha_repr_vals(ai)), ...
+        sprintf('%.4f', mean_R1_per_scenario(ai, nodelay_idx))};
+    for s = 1:numel(delay_scenario_idx)
+        idxS = delay_scenario_idx(s);
+        line_parts{end+1} = sprintf('%.4f', mean_R1_per_scenario(ai, idxS)); %#ok<AGROW>
+        d = delta_R1_bar(ai, s);
+        if d < 0
+            line_parts{end+1} = sprintf('%+.4f !', d); %#ok<AGROW>
+        else
+            line_parts{end+1} = sprintf('%+.4f', d); %#ok<AGROW>
+        end
+    end
+    fprintf('%s\n', strjoin(line_parts, ' | '));
+end
+
+% 同时保留每个 (α, scenario) 的简要分布统计（方差/中位数），供深入诊断
+fprintf('\n===== R1 分布统计（mean / std / median / IQR） =====\n');
 for ai = 1:numel(alpha_repr_idx)
     idxA = alpha_repr_idx(ai);
-    fprintf('\nalpha = %.1f:\n', alpha_range(idxA));
+    fprintf('\nalpha = %.2f:\n', alpha_range(idxA));
     for idxS = 1:num_delay_scenarios
         r1_trials = R1_mat(idxA, :, idxS);
         r1_trials = r1_trials(~isnan(r1_trials));
+        if isempty(r1_trials)
+            fprintf('  %-10s: <无有效样本>\n', char(scenario_labels(idxS)));
+            continue;
+        end
         fprintf('  %-10s: mean=%.4f, std=%.4f, median=%.4f, IQR=[%.4f, %.4f]\n', ...
             char(scenario_labels(idxS)), mean(r1_trials), std(r1_trials), ...
             median(r1_trials), prctile(r1_trials, 25), prctile(r1_trials, 75));
