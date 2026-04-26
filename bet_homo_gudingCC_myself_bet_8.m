@@ -370,8 +370,7 @@ end
 mean_R1 = reshape(mean(R1_mat, 2, 'omitnan'), numA, num_delay_scenarios);
 mean_R3 = reshape(mean(R3_mat, 2, 'omitnan'), numA, num_delay_scenarios);
 
-% --- 箱体截尾均值（用于R1折线图，仅使用Q25-Q75箱体范围内的数据） ---
-% 对每个(alpha, scenario)组合，仅对箱体[Q25, Q75]范围内的试验取均值
+% --- 箱体截尾均值（保留以备回归对比，绘图不再使用；折线统一改用 mean_R1） ---
 trimmed_mean_R1 = NaN(numA, num_delay_scenarios);
 for idxScenario = 1:num_delay_scenarios
     for idxAlpha = 1:numA
@@ -539,17 +538,16 @@ for ai = 1:numel(alpha_repr_idx)
     end
 end
 
-% --- 图2: R1 vs alpha 多场景对比（基于Box Plot数据的Q25-Q75箱体截尾均值） ---
-% 从上方箱线图的原始数据中，取Q25-Q75箱体范围内的试验取均值，绘制折线图
+% --- 图2: R1 vs alpha 多场景对比（普通平均值） ---
 figure('Name', 'Fig2_R1_vs_alpha');
 hold on; grid on;
 ylim([0 1.05]);
 xlabel('\alpha');
 ylabel('R_1 (delay-adjusted)');
-title(sprintf('R_1 vs. \\alpha (delay-adjusted Q25-Q75 trimmed mean, attack: %s, samples: %d, p=%.2f)', ...
+title(sprintf('R_1 vs. \\alpha (delay-adjusted mean, attack: %s, samples: %d, p=%.2f)', ...
     attackMode, num_samples, propagation_probability));
 for idxScenario = 1:num_delay_scenarios
-    plot(alpha_range, trimmed_mean_R1(:, idxScenario), '-o', 'LineWidth', 1.5, ...
+    plot(alpha_range, mean_R1(:, idxScenario), '-o', 'LineWidth', 1.5, ...
         'Color', scenario_colors(idxScenario, :), 'MarkerFaceColor', scenario_colors(idxScenario, :));
 end
 legend(strrep(cellstr(scenario_labels), '_', '\_'), 'Location', 'best');
@@ -799,7 +797,7 @@ end
 
 fprintf('动作场景逐轮R1时间序列计算完成。\n');
 
-% --- 箱体截尾均值（动作场景，算法与基线完全一致，使用Q25-Q75箱体范围） ---
+% --- 箱体截尾均值（动作场景，保留以备回归对比，绘图不再使用） ---
 trimmed_mean_R1_action = NaN(numA, num_actions);
 for ai = 1:num_actions
     for idxAlpha = 1:numA
@@ -820,9 +818,12 @@ for ai = 1:num_actions
     end
 end
 
-% --- 恢复比例计算（使用与前面图表完全一致的基线） ---
-R1_nodelay_base = trimmed_mean_R1(:, nodelay_base_idx);
-R1_heavy_base   = trimmed_mean_R1(:, heavy_base_idx);
+% --- 普通平均值（动作场景，用于折线图与恢复比例计算） ---
+mean_R1_action = reshape(mean(R1_action_mat, 2, 'omitnan'), numA, num_actions);
+
+% --- 恢复比例计算（使用与前面图表完全一致的 mean_R1 基线） ---
+R1_nodelay_base = mean_R1(:, nodelay_base_idx);
+R1_heavy_base   = mean_R1(:, heavy_base_idx);
 gap = R1_nodelay_base - R1_heavy_base;
 
 action_delta_R1 = NaN(numA, num_actions);
@@ -838,7 +839,7 @@ fprintf('\n');
 for idxAlpha = 1:numA
     fprintf('alpha=%.1f:     ', alpha_range(idxAlpha));
     for ai = 1:num_actions
-        delta = trimmed_mean_R1_action(idxAlpha, ai) - R1_heavy_base(idxAlpha);
+        delta = mean_R1_action(idxAlpha, ai) - R1_heavy_base(idxAlpha);
         action_delta_R1(idxAlpha, ai) = delta;
         if gap(idxAlpha) > 0.001
             recovery = delta / gap(idxAlpha) * 100;
@@ -865,9 +866,9 @@ end
 
 %% --- 敏感性实验图表 ---
 
-% 合并数据用于对比图: [no_delay, heavy, A1, A2, A3, A4, A5]
-all_trimmed = [R1_nodelay_base, R1_heavy_base, trimmed_mean_R1_action];
-num_compare_scenarios = size(all_trimmed, 2);
+% 合并数据用于对比图: [no_delay, heavy, A1, A2, A3, A4, A5]（普通平均值）
+all_compare_means = [R1_nodelay_base, R1_heavy_base, mean_R1_action];
+num_compare_scenarios = size(all_compare_means, 2);
 
 all_compare_labels = strings(num_compare_scenarios, 1);
 all_compare_labels(1) = "no_delay";
@@ -894,11 +895,11 @@ figure('Name', 'Fig5_Sensitivity_R1_vs_alpha', 'Position', [100, 100, 1200, 600]
 hold on; grid on;
 ylim([0 1.05]);
 xlabel('\alpha', 'FontSize', 12);
-ylabel('R_1 (delay-adjusted, Q25-Q75 trimmed mean)', 'FontSize', 12);
-title(sprintf('Sensitivity Analysis: R_1 vs. \\alpha (delay-adjusted, samples: %d)', num_samples), 'FontSize', 14);
+ylabel('R_1 (delay-adjusted, mean)', 'FontSize', 12);
+title(sprintf('Sensitivity Analysis: R_1 vs. \\alpha (delay-adjusted mean, samples: %d)', num_samples), 'FontSize', 14);
 
 for si = 1:num_compare_scenarios
-    plot(alpha_range, all_trimmed(:, si), sensitivity_styles{si}, ...
+    plot(alpha_range, all_compare_means(:, si), sensitivity_styles{si}, ...
         'LineWidth', sensitivity_widths(si), 'Color', sensitivity_colors(si, :), ...
         'MarkerFaceColor', sensitivity_colors(si, :), 'MarkerSize', 6);
 end
