@@ -73,7 +73,19 @@ phi_sat = exp(-ep.a_m .* tilde_tau_m - ep.a_e .* tilde_tau_e);
 phi_sat = max(0, min(1, phi_sat));
 
 % --- Φ_loss: 跳数累积可靠性 --------------------------------------------
-phi_loss = (1 - ep.p_hop) .^ n_hops_total;
+% 物理一致性：当端到端总时延 (τ_m+τ_e) = 0 时，对应"理想信道、零传输
+% 时间"，按定义此时单跳丢包率 p_hop 也必须退化为 0，否则 Φ_loss 与
+% "无时延"前提自相矛盾。因此 p_hop 与时延状态联动：
+%   p_hop_eff = p_hop · 1{(τ_m + τ_e) > 0}
+% 这样 no_delay 场景自然得到 Φ_loss = 1（即 η = 1），无需在出口硬编码；
+% 任何 τ > 0 的场景（light/baseline/medium/heavy）p_hop_eff = p_hop，
+% Φ_loss 数值与原模型完全一致，仅修复 τ=0 边界。
+if (tau_m + tau_e) > 0
+    p_hop_eff = ep.p_hop;
+else
+    p_hop_eff = 0;
+end
+phi_loss = (1 - p_hop_eff) .^ n_hops_total;
 phi_loss = max(0, min(1, phi_loss));
 
 % --- Φ_crit: 异质 logistic 临界因子（方案 A 归一化）-------------------

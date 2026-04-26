@@ -19,7 +19,9 @@ delay_cfg.service.cc.forward = 0.003;
 
 delay_cfg.service.noncc.tx = 0.012;
 delay_cfg.service.noncc.rx = 0.009;
-delay_cfg.service.noncc.forward = 0.006;
+% 物理依据：受扰电力 SCADA/WAMS 节点处理压力加大，转发耗时近似翻倍，
+% 让 cyber 路径加长能转化为可见 τ 增量，恢复"cascade 推动 τ 增长"传导链。
+delay_cfg.service.noncc.forward = 0.012;
 
 % 电力侧时延参数
 % PB -> nonCC 的测量时延，与 nonCC -> PB 的执行时延来自 tuesday.md 的定义。
@@ -43,18 +45,21 @@ delay_cfg.power.execution_sensitivity = 0.60;
 delay_cfg.power.eta_model = 'etaplus';
 
 % Φ_sat: exp(-a_m·max(0,τ_m-τ_m0) - a_e·max(0,τ_e-τ_e0))
-% 物理依据：控制环带宽对应"半衰时延"~0.5s，理论值 ln2/0.5≈1.39。
-%           a_m 取 1.5（略高于理论中点）以在 baseline↔heavy 之间
-%           充分撬开 R₁ 差距；a_e 取 1.2，保留"测量比执行更敏感"。
+% 物理依据：把控制环带宽放宽到更保守的 ~1Hz 量级，对应"半衰时延"~1s，
+%           理论值 ln2/1.0 ≈ 0.693。a_m 取 0.7（贴近理论中点），
+%           a_e 取 0.6（保留"测量比执行更敏感"的相对关系）。
+%           降低 a_m/a_e 让 heavy 场景的 Φ_sat 不再深度饱和，
+%           使 R₃ 在 α 增大时（核心机组幸存）能体现明显的恢复效应。
 % τ_m0/τ_e0：PMU 采样周期与执行机构动作死区的典型 50ms 量级
-delay_cfg.power.eta_plus.a_m    = 1.5;     % 测量时延曲率 (1/s)
-delay_cfg.power.eta_plus.a_e    = 1.2;     % 执行时延曲率 (1/s)
+delay_cfg.power.eta_plus.a_m    = 0.7;     % 测量时延曲率 (1/s)
+delay_cfg.power.eta_plus.a_e    = 0.6;     % 执行时延曲率 (1/s)
 delay_cfg.power.eta_plus.tau_m0 = 0.05;    % 测量死区 (s)
 delay_cfg.power.eta_plus.tau_e0 = 0.05;    % 执行死区 (s)
 
-% Φ_loss: (1 - p_hop)^n_hops_total
-% 物理依据：电力骨干通信网受扰丢包率 1%–10% 的中位取值
-delay_cfg.power.eta_plus.p_hop  = 0.03;    % 单跳丢包率
+% Φ_loss: (1 - p_hop_eff)^n_hops_total，p_hop_eff = p_hop · 1{τ>0}
+% 物理依据：电力骨干通信网受扰丢包率 1%–10% 文献区间的中位偏高估值，
+%           用以补偿 a_m/a_e 下调后场景间垂直分离度的损失。
+delay_cfg.power.eta_plus.p_hop  = 0.05;    % 单跳丢包率（受扰条件）
 
 % Φ_crit: 1 / (1 + exp(β·((τ_m+τ_e) - τ_crit_i)/τ_crit_i))
 % τ_crit_i = τ_crit_max · r_i, r_i = P_g(i)/max_j P_g(j) （方案 A）
