@@ -4,7 +4,8 @@ function [eta, components] = computeEtaPlus(tau_m, tau_e, n_hops_total, P_g_ref_
 % 公式
 % ----
 %   Φ_sat  = exp(-a_m · max(0, τ_m - τ_m0) - a_e · max(0, τ_e - τ_e0))
-%   Φ_loss = (1 - p_hop)^n_hops_total
+%   Φ_loss = (1 - p_hop_eff)^n_hops_total
+%       p_hop_eff = p_hop · min(1, (τ_m + τ_e)/τ_ref)
 %   Φ_crit = 1 / (1 + exp(β · ((τ_m + τ_e) - τ_crit_i)/τ_crit_i))
 %   τ_crit_i = τ_crit_max · r_i,   r_i = P_g_ref_i / P_g_ref_max  （方案 A）
 %
@@ -41,7 +42,7 @@ if ~isfield(delay_cfg, 'power') || ~isfield(delay_cfg.power, 'eta_plus')
 end
 ep = delay_cfg.power.eta_plus;
 
-required_fields = {'a_m', 'a_e', 'tau_m0', 'tau_e0', 'p_hop', ...
+required_fields = {'a_m', 'a_e', 'tau_m0', 'tau_e0', 'p_hop', 'tau_ref', ...
     'tau_crit_max', 'beta', 'r_min'};
 for kf = 1:numel(required_fields)
     if ~isfield(ep, required_fields{kf})
@@ -73,18 +74,27 @@ phi_sat = exp(-ep.a_m .* tilde_tau_m - ep.a_e .* tilde_tau_e);
 phi_sat = max(0, min(1, phi_sat));
 
 % --- Φ_loss: 跳数累积可靠性 --------------------------------------------
-% 物理一致性：当端到端总时延 (τ_m+τ_e) = 0 时，对应"理想信道、零传输
-% 时间"，按定义此时单跳丢包率 p_hop 也必须退化为 0，否则 Φ_loss 与
-% "无时延"前提自相矛盾。因此 p_hop 与时延状态联动：
-%   p_hop_eff = p_hop · 1{(τ_m + τ_e) > 0}
-% 这样 no_delay 场景自然得到 Φ_loss = 1（即 η = 1），无需在出口硬编码；
-% 任何 τ > 0 的场景（light/baseline/medium/heavy）p_hop_eff = p_hop，
-% Φ_loss 数值与原模型完全一致，仅修复 τ=0 边界。
-if (tau_m + tau_e) > 0
-    p_hop_eff = ep.p_hop;
+% 物理依据：网络拥塞导致的端到端时延与丢包率正相关（M/M/1 排队论：
+% 利用率 ρ↑ → 队列时延↑ 且 丢包率↑；ITU-T G.1010 同样指出丢包率
+% 随拥塞时延近似线性增长直至饱和）。因此把单跳丢包率写成关于
+% 端到端总时延的连续单调函数，并以 baseline 总时延 τ_ref 作为达到
+% 标称丢包率 p_hop 的拥塞参考点：
+%   p_hop_eff = p_hop · min(1, (τ_m + τ_e) / τ_ref)
+% 满足三项关键性质：
+%   (1) τ=0 → p_hop_eff=0 → Φ_loss=1（自动满足"理想信道"边界，
+%       即 no_delay 场景 η=1，无需出口硬编码）；
+%   (2) 在 (τ_m+τ_e) ≤ τ_ref 区间内连续单调递增，使 light/baseline
+%       场景间获得可分辨的 Φ_loss 阶梯，取代旧版"非零即 p_hop"的阶跃；
+%   (3) (τ_m+τ_e) ≥ τ_ref 后 min(·) 截断到 1，避免 p_hop_eff>p_hop
+%       带来的非物理外推（拥塞超过参考后丢包率仍受链路硬件上限约束）。
+tau_total = tau_m + tau_e;
+if ep.tau_ref > 0
+    p_hop_eff = ep.p_hop * min(1, tau_total / ep.tau_ref);
 else
-    p_hop_eff = 0;
+    % 退化：tau_ref 非正时回退到旧阶跃形式，保证可回归对比。
+    p_hop_eff = ep.p_hop * double(tau_total > 0);
 end
+p_hop_eff = max(0, min(1, p_hop_eff));
 phi_loss = (1 - p_hop_eff) .^ n_hops_total;
 phi_loss = max(0, min(1, phi_loss));
 

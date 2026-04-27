@@ -26,8 +26,8 @@ if use_etaplus_print
     fprintf('\n===== 各时延场景理论 Φ_sat 上界 (η⁺ 模型) =====\n');
     fprintf('  a_m=%.2f, a_e=%.2f, τ_m0=%.3fs, τ_e0=%.3fs\n', ...
         ep_print.a_m, ep_print.a_e, ep_print.tau_m0, ep_print.tau_e0);
-    fprintf('  p_hop=%.3f, τ_crit_max=%.2fs, β=%.1f (Φ_loss/Φ_crit 取决于路径与机组)\n', ...
-        ep_print.p_hop, ep_print.tau_crit_max, ep_print.beta);
+    fprintf('  p_hop=%.3f, τ_ref=%.3fs, τ_crit_max=%.2fs, β=%.1f (Φ_loss/Φ_crit 取决于路径与机组)\n', ...
+        ep_print.p_hop, ep_print.tau_ref, ep_print.tau_crit_max, ep_print.beta);
     for idxScenario = 1:num_delay_scenarios
         sc_cfg = delay_scenarios(idxScenario).cfg;
         tau_m_th = sc_cfg.power.pb_to_noncc_measurement_delay_s;
@@ -36,9 +36,14 @@ if use_etaplus_print
         tilde_m = max(0, tau_m_th - ep_sc.tau_m0);
         tilde_e = max(0, tau_e_th - ep_sc.tau_e0);
         phi_sat_th = exp(-ep_sc.a_m * tilde_m - ep_sc.a_e * tilde_e);
-        fprintf('  %-10s: scale=%.2f, τ_m=%.3fs, τ_e=%.3fs, Φ_sat≈%.3f\n', ...
+        if ep_sc.tau_ref > 0
+            p_hop_eff_th = ep_sc.p_hop * min(1, (tau_m_th + tau_e_th) / ep_sc.tau_ref);
+        else
+            p_hop_eff_th = ep_sc.p_hop * double((tau_m_th + tau_e_th) > 0);
+        end
+        fprintf('  %-10s: scale=%.2f, τ_m=%.3fs, τ_e=%.3fs, Φ_sat≈%.3f, p_hop_eff≈%.4f\n', ...
             char(scenario_labels(idxScenario)), delay_scenarios(idxScenario).scale, ...
-            tau_m_th, tau_e_th, phi_sat_th);
+            tau_m_th, tau_e_th, phi_sat_th, p_hop_eff_th);
     end
 else
     fprintf('\n===== 各时延场景理论 φ (legacy 线性模型) =====\n');

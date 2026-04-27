@@ -50,16 +50,28 @@ delay_cfg.power.eta_model = 'etaplus';
 %           a_e 取 0.6（保留"测量比执行更敏感"的相对关系）。
 %           降低 a_m/a_e 让 heavy 场景的 Φ_sat 不再深度饱和，
 %           使 R₃ 在 α 增大时（核心机组幸存）能体现明显的恢复效应。
-% τ_m0/τ_e0：PMU 采样周期与执行机构动作死区的典型 50ms 量级
+% τ_m0/τ_e0：收紧到工程实际死区，让 light 场景的 τ 真正进入衰减区。
+%   τ_m0=0.02s 对应 IEEE C37.118 PMU 50Hz 报告周期（20ms）；
+%   τ_e0=0.03s 对应 AVR/调速器最快动作死区典型 20–30ms。
+%   原 0.05s 是宽松保护带，会使 light 的 τ_m≈0.05 恰好打在死区上、
+%   Φ_sat≈1，丢失 light↔baseline 的分辨率。
 delay_cfg.power.eta_plus.a_m    = 0.7;     % 测量时延曲率 (1/s)
 delay_cfg.power.eta_plus.a_e    = 0.6;     % 执行时延曲率 (1/s)
-delay_cfg.power.eta_plus.tau_m0 = 0.05;    % 测量死区 (s)
-delay_cfg.power.eta_plus.tau_e0 = 0.05;    % 执行死区 (s)
+delay_cfg.power.eta_plus.tau_m0 = 0.02;    % 测量死区 (s, IEEE C37.118 PMU 周期)
+delay_cfg.power.eta_plus.tau_e0 = 0.03;    % 执行死区 (s, AVR/governor 死区)
 
-% Φ_loss: (1 - p_hop_eff)^n_hops_total，p_hop_eff = p_hop · 1{τ>0}
-% 物理依据：电力骨干通信网受扰丢包率 1%–10% 文献区间的中位偏高估值，
-%           用以补偿 a_m/a_e 下调后场景间垂直分离度的损失。
-delay_cfg.power.eta_plus.p_hop  = 0.05;    % 单跳丢包率（受扰条件）
+% Φ_loss: (1 - p_hop_eff)^n_hops_total
+%   p_hop_eff = p_hop · min(1, (τ_m+τ_e)/τ_ref)
+% 物理依据：M/M/1 排队论与 ITU-T G.1010 均表明，单跳丢包率随网络
+%   拥塞（即端到端排队时延）单调增长直至饱和，而非"凡有时延即定值"。
+%   把单跳丢包率改成关于 (τ_m+τ_e) 的连续单调函数：
+%     - τ=0 → p_hop_eff=0 → Φ_loss=1（保证 no_delay 场景 η=1）；
+%     - τ_m+τ_e = τ_ref（baseline 拥塞水平）→ p_hop_eff = p_hop；
+%     - 超过 τ_ref 后由 min(·) 截断到 p_hop（链路丢包硬件上限约束）。
+%   τ_ref 取 baseline 总时延 = 0.10 + 0.12 = 0.22s。
+% 标称 p_hop 0.05 仍取电力骨干通信受扰条件 1%–10% 区间的中位偏高估值。
+delay_cfg.power.eta_plus.p_hop  = 0.05;    % 单跳丢包率（拥塞参考点处）
+delay_cfg.power.eta_plus.tau_ref = 0.22;   % 拥塞参考时延 (s, baseline τ_m+τ_e)
 
 % Φ_crit: 1 / (1 + exp(β·((τ_m+τ_e) - τ_crit_i)/τ_crit_i))
 % τ_crit_i = τ_crit_max · r_i, r_i = P_g(i)/max_j P_g(j) （方案 A）
