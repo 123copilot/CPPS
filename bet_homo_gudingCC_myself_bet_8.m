@@ -330,25 +330,17 @@ for idxScenario = 1:num_delay_scenarios
                 R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
             end
 
-            % R3：基于最后一轮的 delay_injection_log
-            last_rl = round_logs{end};
-            if isfield(last_rl, 'delay_injection_log') && ~isempty(last_rl.delay_injection_log.eta)
-                dil_last = last_rl.delay_injection_log;
-                n_gen_last = numel(dil_last.eta);
-                P_ref_vec = [];
-                P_actual_vec = [];
-                for gk = 1:n_gen_last
-                    match = find(mpc.gen(:,1) == dil_last.gen_bus(gk), 1, 'first');
-                    if ~isempty(match) && abs(mpc.gen(match, 2)) > eps
-                        pg_ref = mpc.gen(match, 2);
-                        P_ref_vec(end+1, 1) = pg_ref; %#ok<AGROW>
-                        P_actual_vec(end+1, 1) = pg_ref * dil_last.eta(gk); %#ok<AGROW>
-                    end
-                end
-                if ~isempty(P_ref_vec) && all(P_ref_vec ~= 0)
-                    R3_mat(idxAlpha, trial, idxScenario) = computeR3Deviation(P_actual_vec, P_ref_vec);
-                end
-
+            % R3：与 R1 同口径，使用全程累计 (P_ref_traj, P_actual_traj)，
+            % 而不是仅取最后一轮 round_logs{end}。这样可消除"最后一轮幸存
+            % 发电机数极少 → R3 高方差/对 α 不敏感"的问题。
+            % 注：每台发电机在 P_ref_traj 中出现的次数 = 其参与轮次数，因此
+            % 长期暴露在延迟下的机组在 RMS 中权重更大，与 R1 的 φ_traj
+            % 加权口径一致（见上面 :221-226 的注释）。
+            % computeR3Deviation 的 P_ref==0 守卫已由上游 :259 的
+            % abs(mpc.gen(match_round,2)) > eps 过滤保证，故此处只需
+            % 检查非空与正和。
+            if ~isempty(P_ref_traj) && sum(P_ref_traj) > 0
+                R3_mat(idxAlpha, trial, idxScenario) = computeR3Deviation(P_actual_traj, P_ref_traj);
             end
 
             % 聚合延迟因素
@@ -391,6 +383,26 @@ for idxScenario = 1:num_delay_scenarios
                 trimmed_mean_R1(idxAlpha, idxScenario) = median(r1_vals);
             else
                 trimmed_mean_R1(idxAlpha, idxScenario) = mean(inliers);
+            end
+        end
+    end
+end
+% --- R3 箱体截尾均值（保留以备回归对比，绘图不再使用；折线统一用 mean_R3） ---
+trimmed_mean_R3 = NaN(numA, num_delay_scenarios);
+for idxScenario = 1:num_delay_scenarios
+    for idxAlpha = 1:numA
+        r3_vals = R3_mat(idxAlpha, :, idxScenario);
+        r3_vals = r3_vals(~isnan(r3_vals));
+        if isempty(r3_vals)
+            trimmed_mean_R3(idxAlpha, idxScenario) = NaN;
+        else
+            q25 = prctile(r3_vals, 25);
+            q75 = prctile(r3_vals, 75);
+            inliers = r3_vals(r3_vals >= q25 & r3_vals <= q75);
+            if isempty(inliers)
+                trimmed_mean_R3(idxAlpha, idxScenario) = median(r3_vals);
+            else
+                trimmed_mean_R3(idxAlpha, idxScenario) = mean(inliers);
             end
         end
     end
