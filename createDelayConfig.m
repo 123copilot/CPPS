@@ -83,6 +83,24 @@ delay_cfg.power.eta_plus.tau_crit_max = 0.8;  % 最大机组临界总时延 (s)
 delay_cfg.power.eta_plus.beta         = 6;    % logistic 陡峭度
 delay_cfg.power.eta_plus.r_min        = 0.05; % 防止 τ_crit_i → 0 的下界
 
+% ----------------------------------------------------------------------
+% UFLS（Under-Frequency Load Shedding，低频减载）开关
+% ----------------------------------------------------------------------
+% 物理依据：当发电机因控制时延无法跟上调度指令时，真实电网响应是
+%   AGC + UFLS（IEEE Std 1547、NERC PRC-006、IEC 60255-181）：
+%   总发电短缺 → 频率下降 → UFLS 按比例切除负荷恢复供需平衡。
+% 数值依据：MATPOWER 的 DCPF 默认让平衡机（slack）兜底任何 gen-load
+%   失衡，这是数值技巧而非物理事实。当 light 场景下非平衡机被 η<1
+%   折减时，slack 会反向多出力，造成潮流走非原始路径——这正是
+%   "light 比 no_delay 反而更安全（ΔR₁<0）"反常的根因。
+% 修复：在 rundcpf 之前按 φ_global = sum(P_actual)/sum(P_ref) 同比例
+%   缩负荷 PD/QD，让 sum(gen)≈sum(load)，slack 不再兜底，DCPF 线性
+%   性保证 light flows = no_delay flows × φ，子集关系 → 单调性。
+% 兼容性：R₁ 公式不变（仍读 delay_injection_log.eta），仅级联轨迹
+%   按物理标准修正；R₃/热力图/动作/对比实验代码路径不变。
+% 关闭 UFLS（设为 false）会回退到 legacy slack-兜底行为，仅供回归对比。
+delay_cfg.power.enable_ufls = true;
+
 % 指标开关
 delay_cfg.metrics.enable_r1 = true;
 delay_cfg.metrics.enable_r2 = false;

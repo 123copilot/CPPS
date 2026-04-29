@@ -483,6 +483,12 @@ parfor idxAlpha = 1:numA
             delay_injection_log = struct('eta', [], 'tau_m', [], 'tau_e', [], ...
                 'is_reachable', [], 'selected_cc', [], 'gen_bus', []);
 
+            % --- UFLS 快照：在 η 注入前记录在线机组的"参考"总有功 ---
+            % 用 in-service mask 过滤离线机（offline gen 的 Pg 在 col 2 仍为
+            % 原值但 DCPF 会忽略，必须排除以避免污染 φ_global）。
+            ufls_in_service_mask = (gen_status_vec > 0);
+            ufls_total_ref_gen = sum(mpc_sur.gen(ufls_in_service_mask, 2));
+
             for gIdx = 1:size(mpc_sur.gen, 1)
                 if gen_status_vec(gIdx) <= 0
                     continue;  % 已离线的发电机跳过
@@ -570,6 +576,31 @@ parfor idxAlpha = 1:numA
 
             %  在幸存网络上，进行一次直流潮流计算以实现"负载重分布"
             fprintf('正在对幸存电力网络进行潮流重分布计算...\n');
+
+            % ============================================================
+            % UFLS 全局减载：让 sum(load) 与 sum(actual gen) 配平，
+            % 避免 slack 母线"兜底"非平衡机的 η 缺口而扭曲潮流路径。
+            % 物理依据：IEEE Std 1547 / NERC PRC-006 / IEC 60255-181，
+            % 频率下降时按比例切除负荷。
+            % ============================================================
+            phi_global = 1;  % 默认值（关闭 UFLS 时也要存在以便记录）
+            if isfield(delay_cfg.power, 'enable_ufls') && delay_cfg.power.enable_ufls
+                ufls_total_actual_gen = sum(mpc_sur.gen(ufls_in_service_mask, 2));
+                if ufls_total_ref_gen > 0
+                    phi_global = min(1, ufls_total_actual_gen / ufls_total_ref_gen);
+                else
+                    phi_global = 1;  % 无在线发电机：系统已死，跳过缩放
+                end
+                if phi_global < 1
+                    % MATPOWER 标准列号：PD=3, QD=4。失效母线已被设为
+                    % type=4（隔离），DCPF 会忽略其负荷，对其缩放无害。
+                    mpc_sur.bus(:, 3) = mpc_sur.bus(:, 3) * phi_global;
+                    mpc_sur.bus(:, 4) = mpc_sur.bus(:, 4) * phi_global;
+                    fprintf('  -> UFLS 触发: φ_global = %.4f, 总负荷按比例缩减 %.2f%%\n', ...
+                        phi_global, (1 - phi_global) * 100);
+                end
+            end
+            delay_injection_log.phi_global = phi_global;
             %try
             results_sur = rundcpf(mpc_sur,mpopt);
             sur_P_branch = abs(results_sur.branch(:, 14)) + 1;
