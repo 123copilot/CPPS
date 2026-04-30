@@ -224,8 +224,24 @@ for idxScenario = 1:num_delay_scenarios
             % φ_traj = (Σ_round Σ_g P_ref_g_round · η_g_round) / (Σ_round Σ_g P_ref_g_round)
             % 实际计算逻辑：累加 P_ref/P_actual 之后调一次 computeDelayAdjustedR1，
             % 利用其内部公式 R1 = surviving_load * (sum(P_actual)/sum(P_ref)) / total_load 一次成型。
+            %
+            % Step 1+2 (供电守恒口径对齐):
+            % 把 UFLS 主动切除负荷计入 R1 损失，同时统一 surviving_load 与 φ
+            % 的时间口径，全部走"以 ΣP_ref_round 为权的全程加权平均"：
+            %   surviving_load_traj = Σ_r (L_surv_r · w_r) / Σ_r w_r
+            %   phi_eff_traj        = Σ_r (φ_eff_r · w_r) / Σ_r w_r
+            %   phi_global_traj     = Σ_r (φ_global_r · w_r) / Σ_r w_r
+            %   R1 = surviving_load_traj · min(phi_global_traj, phi_eff_traj) / L_initial
+            % 其中 φ_eff_r 取自 round_logs{r}.delay_injection_log.ufls_phi_eff
+            % （cascadeLogic line 665-667 已写入；UFLS 关闭时 φ_eff_r=φ_global_r,
+            % 公式严格退回旧版本，保证回归测试可用）。
             P_ref_traj = [];
             P_actual_traj = [];
+            % 全程加权累加器（Step 1+2 新增）
+            Lsurv_w_sum = 0;
+            phi_eff_w_sum = 0;
+            phi_global_w_sum = 0;
+            weight_sum = 0;
 
             if isempty(round_logs)
                 R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
@@ -249,7 +265,7 @@ for idxScenario = 1:num_delay_scenarios
                 round_n_fp(roundIdx) = numel(rl.failed_power_nodes);
                 round_n_fc(roundIdx) = numel(rl.failed_cyber_nodes);
 
-                % R1 per round（delay-adjusted）
+                % R1 per round（delay-adjusted，含 UFLS 损失）
                 if isfield(rl, 'delay_injection_log') && ~isempty(rl.delay_injection_log.eta)
                     dil_round = rl.delay_injection_log;
                     P_ref_round = [];
@@ -263,11 +279,29 @@ for idxScenario = 1:num_delay_scenarios
                         end
                     end
                     if ~isempty(P_ref_round) && sum(P_ref_round) > 0
+                        % 取该轮 UFLS 后的有效 φ（cascadeLogic line 665-667 注入）；
+                        % 如果字段缺失（极老 round_log），回退到 φ_global=ΣP_actual/ΣP_ref。
+                        phi_global_r = min(1, sum(P_actual_round) / sum(P_ref_round));
+                        if isfield(dil_round, 'ufls_phi_eff') && ~isempty(dil_round.ufls_phi_eff)
+                            phi_eff_r = dil_round.ufls_phi_eff;
+                        else
+                            phi_eff_r = phi_global_r;
+                        end
+                        % 该轮 R1（含 UFLS 损失）：snapshot surviving_load × min(φ_g, φ_eff)
                         round_R1_values(roundIdx) = computeDelayAdjustedR1( ...
-                            initial_power_load, rl.failed_power_nodes, P_actual_round, P_ref_round);
-                        % 追加到全程轨迹累计向量，用于 R1_mat 的 φ_traj 计算
+                            initial_power_load, rl.failed_power_nodes, ...
+                            P_actual_round, P_ref_round, phi_eff_r);
+                        % 追加到全程轨迹累计向量（保留原 R3 同口径累计）
                         P_ref_traj = [P_ref_traj; P_ref_round]; %#ok<AGROW>
                         P_actual_traj = [P_actual_traj; P_actual_round]; %#ok<AGROW>
+                        % 全程加权累加（Step 1+2 新增）：
+                        % 权重 w_r = ΣP_ref_round，与 φ_traj 的加权口径一致
+                        w_round = sum(P_ref_round);
+                        [~, L_surv_r] = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
+                        Lsurv_w_sum     = Lsurv_w_sum     + L_surv_r     * w_round;
+                        phi_eff_w_sum   = phi_eff_w_sum   + phi_eff_r    * w_round;
+                        phi_global_w_sum= phi_global_w_sum+ phi_global_r * w_round;
+                        weight_sum      = weight_sum      + w_round;
                     else
                         round_R1_values(roundIdx) = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
                     end
@@ -320,10 +354,20 @@ for idxScenario = 1:num_delay_scenarios
             round_ts_n_failed_power_cell{idxAlpha, trial, idxScenario} = round_n_fp;
             round_ts_n_failed_cyber_cell{idxAlpha, trial, idxScenario} = round_n_fc;
 
-            % 用全程累计 (P_ref_traj, P_actual_traj) 一次性算 trial 级 R1：
-            % 等价于 R1 = surviving_load * φ_traj / total_load，其中
-            % φ_traj 在所有轮次、所有发电机上以原始 P_ref 为权做加权平均。
-            if ~isempty(P_ref_traj) && sum(P_ref_traj) > 0
+            % 用全程加权累加得到的 (surviving_load_traj, phi_eff_traj) 计算 trial 级 R1：
+            % R1 = surviving_load_traj × min(phi_global_traj, phi_eff_traj) / L_initial
+            % 两个因子都在同一时间口径（以 ΣP_ref_round 为权的全程平均），含 UFLS 损失。
+            % 关键不变量：UFLS 关闭时 phi_eff_r ≡ phi_global_r ⇒ phi_eff_traj = phi_global_traj，
+            % 公式严格退回旧版本 (R1 = surviving_load × phi_global / L_initial)。
+            if weight_sum > 0
+                surviving_load_traj = Lsurv_w_sum / weight_sum;
+                phi_eff_traj    = phi_eff_w_sum    / weight_sum;
+                phi_global_traj = phi_global_w_sum / weight_sum;
+                R1_mat(idxAlpha, trial, idxScenario) = computeDelayAdjustedR1( ...
+                    initial_power_load, failed_pn, P_actual_traj, P_ref_traj, ...
+                    min(phi_global_traj, phi_eff_traj), surviving_load_traj);
+            elseif ~isempty(P_ref_traj) && sum(P_ref_traj) > 0
+                % 兜底：累加器为零但 traj 非空（理论上不会发生，保守保留旧路径）
                 R1_mat(idxAlpha, trial, idxScenario) = computeDelayAdjustedR1( ...
                     initial_power_load, failed_pn, P_actual_traj, P_ref_traj);
             else
@@ -738,21 +782,51 @@ for ai = 1:num_actions
             end
             P_ref_traj_a = [];
             P_actual_traj_a = [];
+            % 全程加权累加器（Step 1+2，与基线场景同口径）
+            Lsurv_w_sum_a = 0;
+            phi_eff_w_sum_a = 0;
+            phi_global_w_sum_a = 0;
+            weight_sum_a = 0;
             for rIdx_a = 1:numel(action_round_logs)
                 rl_aa = action_round_logs{rIdx_a};
                 if isfield(rl_aa, 'delay_injection_log') && ~isempty(rl_aa.delay_injection_log.eta)
                     dil_aa = rl_aa.delay_injection_log;
+                    P_ref_round_a = [];
+                    P_actual_round_a = [];
                     for gk_a = 1:numel(dil_aa.eta)
                         match_a = find(mpc.gen(:,1) == dil_aa.gen_bus(gk_a), 1, 'first');
                         if ~isempty(match_a) && abs(mpc.gen(match_a, 2)) > eps
                             pg_ref_a = mpc.gen(match_a, 2);
-                            P_ref_traj_a(end+1, 1) = pg_ref_a; %#ok<AGROW>
-                            P_actual_traj_a(end+1, 1) = pg_ref_a * dil_aa.eta(gk_a); %#ok<AGROW>
+                            P_ref_round_a(end+1, 1) = pg_ref_a; %#ok<AGROW>
+                            P_actual_round_a(end+1, 1) = pg_ref_a * dil_aa.eta(gk_a); %#ok<AGROW>
                         end
+                    end
+                    if ~isempty(P_ref_round_a) && sum(P_ref_round_a) > 0
+                        P_ref_traj_a    = [P_ref_traj_a;    P_ref_round_a];    %#ok<AGROW>
+                        P_actual_traj_a = [P_actual_traj_a; P_actual_round_a]; %#ok<AGROW>
+                        phi_global_ra = min(1, sum(P_actual_round_a) / sum(P_ref_round_a));
+                        if isfield(dil_aa, 'ufls_phi_eff') && ~isempty(dil_aa.ufls_phi_eff)
+                            phi_eff_ra = dil_aa.ufls_phi_eff;
+                        else
+                            phi_eff_ra = phi_global_ra;
+                        end
+                        w_ra = sum(P_ref_round_a);
+                        [~, L_surv_ra] = computeR1LoadRatio(initial_power_load, rl_aa.failed_power_nodes);
+                        Lsurv_w_sum_a      = Lsurv_w_sum_a      + L_surv_ra      * w_ra;
+                        phi_eff_w_sum_a    = phi_eff_w_sum_a    + phi_eff_ra     * w_ra;
+                        phi_global_w_sum_a = phi_global_w_sum_a + phi_global_ra  * w_ra;
+                        weight_sum_a       = weight_sum_a       + w_ra;
                     end
                 end
             end
-            if ~isempty(P_ref_traj_a) && sum(P_ref_traj_a) > 0
+            if weight_sum_a > 0
+                surviving_load_traj_a = Lsurv_w_sum_a      / weight_sum_a;
+                phi_eff_traj_a        = phi_eff_w_sum_a    / weight_sum_a;
+                phi_global_traj_a     = phi_global_w_sum_a / weight_sum_a;
+                R1_action_mat(idxAlpha, trial, ai) = computeDelayAdjustedR1( ...
+                    initial_power_load, failed_pn, P_actual_traj_a, P_ref_traj_a, ...
+                    min(phi_global_traj_a, phi_eff_traj_a), surviving_load_traj_a);
+            elseif ~isempty(P_ref_traj_a) && sum(P_ref_traj_a) > 0
                 R1_action_mat(idxAlpha, trial, ai) = computeDelayAdjustedR1( ...
                     initial_power_load, failed_pn, P_actual_traj_a, P_ref_traj_a);
             else
@@ -791,8 +865,16 @@ for ai = 1:num_actions
                         end
                     end
                     if ~isempty(P_ref_ra) && sum(P_ref_ra) > 0
+                        % 与 trial 级 R1 同口径：含 UFLS 后的 ufls_phi_eff
+                        phi_global_pa = min(1, sum(P_actual_ra) / sum(P_ref_ra));
+                        if isfield(dil_a, 'ufls_phi_eff') && ~isempty(dil_a.ufls_phi_eff)
+                            phi_eff_pa = dil_a.ufls_phi_eff;
+                        else
+                            phi_eff_pa = phi_global_pa;
+                        end
                         padded_R1_a(trial, rIdx) = computeDelayAdjustedR1(...
-                            initial_power_load, rl_a.failed_power_nodes, P_actual_ra, P_ref_ra);
+                            initial_power_load, rl_a.failed_power_nodes, ...
+                            P_actual_ra, P_ref_ra, phi_eff_pa);
                     else
                         padded_R1_a(trial, rIdx) = computeR1LoadRatio(initial_power_load, rl_a.failed_power_nodes);
                     end
