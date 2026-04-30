@@ -101,6 +101,34 @@ delay_cfg.power.eta_plus.r_min        = 0.05; % 防止 τ_crit_i → 0 的下界
 % 关闭 UFLS（设为 false）会回退到 legacy slack-兜底行为，仅供回归对比。
 delay_cfg.power.enable_ufls = true;
 
+% ----------------------------------------------------------------------
+% UFLS 过切裕度（over-shedding margin，方案 A）
+% ----------------------------------------------------------------------
+% 物理依据：UFLS 的频率测量、判据、跳闸指令本身要走 CC 通道，通道时延越大：
+%   (1) 频率测量越滞后 → 实际跌幅被低估；
+%   (2) 切负荷指令越滞后 → 在切除生效前已有更多机组逼近失稳；
+% 因此真实工程必须留过切裕度（IEEE Std C37.117 / NERC PRC-006 推荐
+%   20%–50%），即实际切除量 = 名义缺额 × (1 + γ(τ))，否则切完之后频率
+%   仍继续下跌、引发二轮乃至三轮 UFLS 动作。
+%
+% 数学形式：γ(τ) = γ_max · min(1, (τ_m+τ_e)/τ_ref)，与 Φ_loss 同构归一化：
+%   - τ=0  → γ=0（理想信道下名义缺额=0，无需 UFLS，也无需过切）；
+%   - τ ≤ τ_ref（baseline 拥塞）→ γ 在 [0, γ_max] 间线性增长；
+%   - τ ≥ τ_ref → γ 饱和到 γ_max（再大的时延也只过切有限比例，
+%                  对应工程实际"过切档位上限"）。
+%
+% 影响：在 cascadeLogic 内将 mpc_sur.bus(:,3:4) 缩放因子从 φ_global
+%   改为 φ_eff = max(0, 1 - (1-φ_global)·(1+γ(τ)))，使 light 等小缺额
+%   场景的拓扑保护红利无法超过 UFLS 过切带来的额外负荷损失，恢复
+%   R₁ 关于 τ 的单调性。
+%
+% 参数取值：γ_max=0.30 取 NERC 推荐区间下界，最保守。
+%          tau_ref 默认复用 Φ_loss 的拥塞参考时延（=baseline τ_m+τ_e=0.22s）。
+delay_cfg.power.ufls.over_shed_max = 0.30;
+% tau_ref 留空则在运行时回退到 delay_cfg.power.eta_plus.tau_ref，保证
+% UFLS 过切归一化时延与 Φ_loss 拥塞归一化时延一致。如需独立调整可设值。
+delay_cfg.power.ufls.tau_ref = [];
+
 % 指标开关
 delay_cfg.metrics.enable_r1 = true;
 delay_cfg.metrics.enable_r2 = false;

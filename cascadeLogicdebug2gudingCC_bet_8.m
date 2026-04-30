@@ -584,6 +584,8 @@ parfor idxAlpha = 1:numA
             % 频率下降时按比例切除负荷。
             % ============================================================
             phi_global = 1;  % 默认值（关闭 UFLS 时也要存在以便记录）
+            ufls_gamma_over = 0;
+            ufls_phi_eff = 1;
             if isfield(delay_cfg.power, 'enable_ufls') && delay_cfg.power.enable_ufls
                 ufls_total_actual_gen = sum(mpc_sur.gen(ufls_in_service_mask, 2));
                 if ufls_total_ref_gen > 0
@@ -591,16 +593,78 @@ parfor idxAlpha = 1:numA
                 else
                     phi_global = 1;  % 无在线发电机：系统已死，跳过缩放
                 end
-                if phi_global < 1
+
+                % --- 方案 A: 时延依赖的 UFLS 过切因子 (over-shedding margin) ---
+                % 物理依据：UFLS 频率测量与跳闸指令本身需经 CC 通道传输，
+                %   通道时延越大，频率跌幅被低估、指令到达更慢，工程实践
+                %   (IEEE Std C37.117 / NERC PRC-006) 必须留 20%-50% 过切
+                %   裕度，否则切完后频率仍下跌、引发二轮 UFLS 动作。
+                % γ(τ) = γ_max · min(1, (τ_m+τ_e)/τ_ref)，与 Φ_loss 同构归一化：
+                %   τ=0 → γ=0（理想信道无需过切，自动满足 no_delay 边界）；
+                %   τ ≥ τ_ref → γ 饱和到 γ_max。
+                ufls_phi_eff = phi_global;
+                if phi_global < 1 && isfield(delay_injection_log, 'tau_m') ...
+                        && ~isempty(delay_injection_log.tau_m)
+                    reach_mask = false(size(delay_injection_log.tau_m));
+                    if isfield(delay_injection_log, 'is_reachable') ...
+                            && ~isempty(delay_injection_log.is_reachable)
+                        reach_mask = logical(delay_injection_log.is_reachable(:)');
+                        reach_mask = reach_mask(1:numel(delay_injection_log.tau_m));
+                    end
+                    if any(reach_mask)
+                        tau_m_vec = delay_injection_log.tau_m(reach_mask);
+                        tau_e_vec = delay_injection_log.tau_e(reach_mask);
+                        valid_idx = ~isnan(tau_m_vec) & ~isnan(tau_e_vec);
+                        if any(valid_idx)
+                            tau_sum_mean = mean(tau_m_vec(valid_idx) + tau_e_vec(valid_idx));
+                        else
+                            tau_sum_mean = 0;
+                        end
+                    else
+                        tau_sum_mean = 0;
+                    end
+
+                    % 读取参数（容错：缺省字段时回退到 0.30 / Φ_loss 的 τ_ref）
+                    gamma_max = 0.30;
+                    tau_ref_local = 0.22;
+                    if isfield(delay_cfg.power, 'eta_plus') ...
+                            && isfield(delay_cfg.power.eta_plus, 'tau_ref') ...
+                            && ~isempty(delay_cfg.power.eta_plus.tau_ref)
+                        tau_ref_local = delay_cfg.power.eta_plus.tau_ref;
+                    end
+                    if isfield(delay_cfg.power, 'ufls')
+                        if isfield(delay_cfg.power.ufls, 'over_shed_max') ...
+                                && ~isempty(delay_cfg.power.ufls.over_shed_max)
+                            gamma_max = delay_cfg.power.ufls.over_shed_max;
+                        end
+                        if isfield(delay_cfg.power.ufls, 'tau_ref') ...
+                                && ~isempty(delay_cfg.power.ufls.tau_ref)
+                            tau_ref_local = delay_cfg.power.ufls.tau_ref;
+                        end
+                    end
+
+                    if tau_ref_local > 0
+                        ufls_gamma_over = gamma_max * min(1, tau_sum_mean / tau_ref_local);
+                    else
+                        ufls_gamma_over = 0;
+                    end
+                    ufls_phi_eff = max(0, 1 - (1 - phi_global) * (1 + ufls_gamma_over));
+                end
+
+                if ufls_phi_eff < 1
                     % MATPOWER 标准列号：PD=3, QD=4。失效母线已被设为
                     % type=4（隔离），DCPF 会忽略其负荷，对其缩放无害。
-                    mpc_sur.bus(:, 3) = mpc_sur.bus(:, 3) * phi_global;
-                    mpc_sur.bus(:, 4) = mpc_sur.bus(:, 4) * phi_global;
-                    fprintf('  -> UFLS 触发: φ_global = %.4f, 总负荷按比例缩减 %.2f%%\n', ...
-                        phi_global, (1 - phi_global) * 100);
+                    mpc_sur.bus(:, 3) = mpc_sur.bus(:, 3) * ufls_phi_eff;
+                    mpc_sur.bus(:, 4) = mpc_sur.bus(:, 4) * ufls_phi_eff;
+                    fprintf(['  -> UFLS 触发: φ_global=%.4f, γ(τ)=%.4f, ' ...
+                        'φ_eff=%.4f, 总负荷削减 %.2f%%\n'], ...
+                        phi_global, ufls_gamma_over, ufls_phi_eff, ...
+                        (1 - ufls_phi_eff) * 100);
                 end
             end
             delay_injection_log.phi_global = phi_global;
+            delay_injection_log.ufls_gamma_over = ufls_gamma_over;
+            delay_injection_log.ufls_phi_eff = ufls_phi_eff;
             %try
             results_sur = rundcpf(mpc_sur,mpopt);
             sur_P_branch = abs(results_sur.branch(:, 14)) + 1;
