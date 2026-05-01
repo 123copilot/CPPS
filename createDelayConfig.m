@@ -79,8 +79,8 @@ delay_cfg.power.eta_plus.tau_ref = 0.22;   % 拥塞参考时延 (s, baseline τ_
 %   边界条件一致），避免 no_delay 场景出现 ~0.25% 的非物理基线偏差。
 % τ_crit_i = τ_crit_max · r_i, r_i = P_g(i)/max_j P_g(j) （方案 A）
 % 物理依据：WAMS 文献对最大机组的耐受时延上限 ~0.7-1.0s
-delay_cfg.power.eta_plus.tau_crit_max = 0.8;  % 最大机组临界总时延 (s)
-delay_cfg.power.eta_plus.beta         = 6;    % logistic 陡峭度
+delay_cfg.power.eta_plus.tau_crit_max = 1.2;  % 最大机组临界总时延 (s)：抬高后 medium/heavy 中等容量机组脱离 Φ_crit≈0 死区，使 α 的拓扑选择能传导到 R1
+delay_cfg.power.eta_plus.beta         = 4;    % logistic 陡峭度：β=4 拓宽失稳过渡带，让机组分化连续而非阶跃
 delay_cfg.power.eta_plus.r_min        = 0.05; % 防止 τ_crit_i → 0 的下界
 
 % ----------------------------------------------------------------------
