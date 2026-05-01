@@ -224,6 +224,11 @@ for idxScenario = 1:num_delay_scenarios
             % φ_traj = (Σ_round Σ_g P_ref_g_round · η_g_round) / (Σ_round Σ_g P_ref_g_round)
             % 实际计算逻辑：累加 P_ref/P_actual 之后调一次 computeDelayAdjustedR1，
             % 利用其内部公式 R1 = surviving_load * (sum(P_actual)/sum(P_ref)) / total_load 一次成型。
+            % 另外，为反映 UFLS 主动减载（拓扑外的"被切走的负荷"），同时按 w_r=ΣP_ref_round
+            % 加权累计 φ_eff_round 与 surviving_load_round，最终以
+            %   R1 = surviving_load_traj × min(φ_global_traj, φ_eff_traj) / L_initial
+            % 计算 trial 级 R1。这样 (A) 拓扑停电、(B) η 折损、(C) UFLS 主动减载
+            % 三种"用户失电"通道都被纳入，不会再出现 light < no_delay 的反转。
             P_ref_traj = [];
             P_actual_traj = [];
 
@@ -244,6 +249,11 @@ for idxScenario = 1:num_delay_scenarios
             trial_tau_e_sum = 0; trial_tau_e_count = 0;
             trial_unreachable = 0; trial_gen_total = 0;
 
+            % UFLS 加权累计器：以本轮参考发电量 w_r=ΣP_ref_round 为权
+            traj_w_total = 0;
+            traj_w_phi_eff_sum = 0;
+            traj_w_surv_load_sum = 0;
+
             for roundIdx = 1:num_rounds
                 rl = round_logs{roundIdx};
                 round_n_fp(roundIdx) = numel(rl.failed_power_nodes);
@@ -263,11 +273,25 @@ for idxScenario = 1:num_delay_scenarios
                         end
                     end
                     if ~isempty(P_ref_round) && sum(P_ref_round) > 0
+                        % 提取本轮 UFLS 实际保留比例 φ_eff（默认 1：UFLS 关闭或未触发）
+                        if isfield(dil_round, 'ufls_phi_eff') && ~isempty(dil_round.ufls_phi_eff)
+                            phi_eff_round = dil_round.ufls_phi_eff;
+                        else
+                            phi_eff_round = 1;
+                        end
+                        % 本轮拓扑幸存负荷（A 类停电之后剩余的用户负荷）
+                        [~, surv_load_round, ~] = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
                         round_R1_values(roundIdx) = computeDelayAdjustedR1( ...
-                            initial_power_load, rl.failed_power_nodes, P_actual_round, P_ref_round);
+                            initial_power_load, rl.failed_power_nodes, P_actual_round, P_ref_round, ...
+                            phi_eff_round);
                         % 追加到全程轨迹累计向量，用于 R1_mat 的 φ_traj 计算
                         P_ref_traj = [P_ref_traj; P_ref_round]; %#ok<AGROW>
                         P_actual_traj = [P_actual_traj; P_actual_round]; %#ok<AGROW>
+                        % 以 w_r=ΣP_ref_round 加权累计 φ_eff 与 surviving_load
+                        w_r = sum(P_ref_round);
+                        traj_w_total = traj_w_total + w_r;
+                        traj_w_phi_eff_sum = traj_w_phi_eff_sum + w_r * phi_eff_round;
+                        traj_w_surv_load_sum = traj_w_surv_load_sum + w_r * surv_load_round;
                     else
                         round_R1_values(roundIdx) = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
                     end
@@ -321,11 +345,22 @@ for idxScenario = 1:num_delay_scenarios
             round_ts_n_failed_cyber_cell{idxAlpha, trial, idxScenario} = round_n_fc;
 
             % 用全程累计 (P_ref_traj, P_actual_traj) 一次性算 trial 级 R1：
-            % 等价于 R1 = surviving_load * φ_traj / total_load，其中
-            % φ_traj 在所有轮次、所有发电机上以原始 P_ref 为权做加权平均。
+            % R1 = surviving_load_traj × min(φ_global_traj, φ_eff_traj) / L_initial
+            % 其中 φ_global_traj 等价于 sum(P_actual_traj)/sum(P_ref_traj)（P_ref 加权），
+            % φ_eff_traj 与 surviving_load_traj 是按 w_r=ΣP_ref_round 加权的全程累计。
+            % computeDelayAdjustedR1 内部对 phi_eff_override / surviving_load_override
+            % 取 min 与替换，完整覆盖 (A) 拓扑停电、(B) η 折损、(C) UFLS 主动减载三类失电。
             if ~isempty(P_ref_traj) && sum(P_ref_traj) > 0
+                if traj_w_total > 0
+                    phi_eff_traj_val = traj_w_phi_eff_sum / traj_w_total;
+                    surv_load_traj_val = traj_w_surv_load_sum / traj_w_total;
+                else
+                    phi_eff_traj_val = [];
+                    surv_load_traj_val = [];
+                end
                 R1_mat(idxAlpha, trial, idxScenario) = computeDelayAdjustedR1( ...
-                    initial_power_load, failed_pn, P_actual_traj, P_ref_traj);
+                    initial_power_load, failed_pn, P_actual_traj, P_ref_traj, ...
+                    phi_eff_traj_val, surv_load_traj_val);
             else
                 R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
             end
@@ -738,23 +773,48 @@ for ai = 1:num_actions
             end
             P_ref_traj_a = [];
             P_actual_traj_a = [];
+            traj_w_total_a = 0;
+            traj_w_phi_eff_sum_a = 0;
+            traj_w_surv_load_sum_a = 0;
             for rIdx_a = 1:numel(action_round_logs)
                 rl_aa = action_round_logs{rIdx_a};
                 if isfield(rl_aa, 'delay_injection_log') && ~isempty(rl_aa.delay_injection_log.eta)
                     dil_aa = rl_aa.delay_injection_log;
+                    P_ref_round_a = [];
                     for gk_a = 1:numel(dil_aa.eta)
                         match_a = find(mpc.gen(:,1) == dil_aa.gen_bus(gk_a), 1, 'first');
                         if ~isempty(match_a) && abs(mpc.gen(match_a, 2)) > eps
                             pg_ref_a = mpc.gen(match_a, 2);
                             P_ref_traj_a(end+1, 1) = pg_ref_a; %#ok<AGROW>
                             P_actual_traj_a(end+1, 1) = pg_ref_a * dil_aa.eta(gk_a); %#ok<AGROW>
+                            P_ref_round_a(end+1, 1) = pg_ref_a; %#ok<AGROW>
                         end
+                    end
+                    if ~isempty(P_ref_round_a) && sum(P_ref_round_a) > 0
+                        if isfield(dil_aa, 'ufls_phi_eff') && ~isempty(dil_aa.ufls_phi_eff)
+                            phi_eff_round_a = dil_aa.ufls_phi_eff;
+                        else
+                            phi_eff_round_a = 1;
+                        end
+                        [~, surv_load_round_a, ~] = computeR1LoadRatio(initial_power_load, rl_aa.failed_power_nodes);
+                        w_r_a = sum(P_ref_round_a);
+                        traj_w_total_a = traj_w_total_a + w_r_a;
+                        traj_w_phi_eff_sum_a = traj_w_phi_eff_sum_a + w_r_a * phi_eff_round_a;
+                        traj_w_surv_load_sum_a = traj_w_surv_load_sum_a + w_r_a * surv_load_round_a;
                     end
                 end
             end
             if ~isempty(P_ref_traj_a) && sum(P_ref_traj_a) > 0
+                if traj_w_total_a > 0
+                    phi_eff_traj_val_a = traj_w_phi_eff_sum_a / traj_w_total_a;
+                    surv_load_traj_val_a = traj_w_surv_load_sum_a / traj_w_total_a;
+                else
+                    phi_eff_traj_val_a = [];
+                    surv_load_traj_val_a = [];
+                end
                 R1_action_mat(idxAlpha, trial, ai) = computeDelayAdjustedR1( ...
-                    initial_power_load, failed_pn, P_actual_traj_a, P_ref_traj_a);
+                    initial_power_load, failed_pn, P_actual_traj_a, P_ref_traj_a, ...
+                    phi_eff_traj_val_a, surv_load_traj_val_a);
             else
                 R1_action_mat(idxAlpha, trial, ai) = computeR1LoadRatio(initial_power_load, failed_pn);
             end
@@ -791,8 +851,14 @@ for ai = 1:num_actions
                         end
                     end
                     if ~isempty(P_ref_ra) && sum(P_ref_ra) > 0
+                        if isfield(dil_a, 'ufls_phi_eff') && ~isempty(dil_a.ufls_phi_eff)
+                            phi_eff_round_ra = dil_a.ufls_phi_eff;
+                        else
+                            phi_eff_round_ra = 1;
+                        end
                         padded_R1_a(trial, rIdx) = computeDelayAdjustedR1(...
-                            initial_power_load, rl_a.failed_power_nodes, P_actual_ra, P_ref_ra);
+                            initial_power_load, rl_a.failed_power_nodes, P_actual_ra, P_ref_ra, ...
+                            phi_eff_round_ra);
                     else
                         padded_R1_a(trial, rIdx) = computeR1LoadRatio(initial_power_load, rl_a.failed_power_nodes);
                     end
