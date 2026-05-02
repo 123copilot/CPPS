@@ -586,6 +586,7 @@ parfor idxAlpha = 1:numA
             phi_global = 1;  % 默认值（关闭 UFLS 时也要存在以便记录）
             ufls_gamma_over = 0;
             ufls_phi_eff = 1;
+            ufls_shed_max_eff = NaN;  % α 耦合后的单次 UFLS cap，仅在触发时被覆写
             if isfield(delay_cfg.power, 'enable_ufls') && delay_cfg.power.enable_ufls
                 ufls_total_actual_gen = sum(mpc_sur.gen(ufls_in_service_mask, 2));
                 if ufls_total_ref_gen > 0
@@ -628,6 +629,7 @@ parfor idxAlpha = 1:numA
                     gamma_max = 0.30;
                     tau_ref_local = 0.22;
                     shed_max_local = 0.85;  % NERC PRC-006 / IEEE C37.117 单次 UFLS 实际可切量上限
+                    shed_max_min_local = shed_max_local;  % 默认无 α 耦合（向后兼容）
                     if isfield(delay_cfg.power, 'eta_plus') ...
                             && isfield(delay_cfg.power.eta_plus, 'tau_ref') ...
                             && ~isempty(delay_cfg.power.eta_plus.tau_ref)
@@ -646,23 +648,45 @@ parfor idxAlpha = 1:numA
                                 && ~isempty(delay_cfg.power.ufls.shed_max)
                             shed_max_local = delay_cfg.power.ufls.shed_max;
                         end
+                        if isfield(delay_cfg.power.ufls, 'shed_max_min') ...
+                                && ~isempty(delay_cfg.power.ufls.shed_max_min)
+                            shed_max_min_local = delay_cfg.power.ufls.shed_max_min;
+                        else
+                            shed_max_min_local = shed_max_local;
+                        end
                     end
                     % 边界校验：shed_max 必须 ∈ [0, 1]（实际可切负荷比例的物理范围）。
                     % 容错处理用户/上游误配置（例如填了 1.2 或负值）。
                     shed_max_local = max(0, min(1, shed_max_local));
+                    % shed_max_min 必须 ∈ [0, shed_max]，否则退化为无 α 耦合（向后兼容）。
+                    if ~(shed_max_min_local >= 0 && shed_max_min_local <= shed_max_local)
+                        shed_max_min_local = shed_max_local;
+                    end
+
+                    % --- α 耦合的单次 UFLS 切除上限 (NERC PRC-006-5 §4) ---
+                    % 物理依据：α 越大代表 (1+α)·P_branch 容量裕度越大、
+                    %   N-k 运行储备越深，初级调频能在 UFLS 介入前托住频率，
+                    %   单次 UFLS 仅需 "浅切"。反之 α=0 须保留 "深切" 上限。
+                    % 线性插值：α=0 → shed_max（与历史行为一致），
+                    %   α=1 → shed_max_min；alpha 取值范围 [0,1] 由
+                    %   cascadeLogic 顶层 alpha_range 限定，clamp 仍做防御性处理。
+                    alpha_clamped = max(0, min(1, alpha));
+                    shed_max_eff = shed_max_local - ...
+                        (shed_max_local - shed_max_min_local) * alpha_clamped;
 
                     if tau_ref_local > 0
                         ufls_gamma_over = gamma_max * min(1, tau_sum_mean / tau_ref_local);
                     else
                         ufls_gamma_over = 0;
                     end
-                    % 物理上限钳位：实际切除量不能超过 shed_max（NERC PRC-006 经验上限）。
+                    % 物理上限钳位：实际切除量不能超过 shed_max_eff(α)。
                     % 这一步同时修正了原公式在 (1-φ_global)·(1+γ) ≥ 1 时
-                    % 把 φ_eff 硬切为 0 的非物理行为，使 heavy 场景 φ_eff
-                    % 始终 ≥ 1-shed_max=0.15，且随 φ_global 上升单调上升。
+                    % 把 φ_eff 硬切为 0 的非物理行为；α 越大、cap 越浅，
+                    % heavy 场景下 φ_eff 随 α 单调抬升，恢复 α 的保护功能。
                     shed_amount = (1 - phi_global) * (1 + ufls_gamma_over);
-                    shed_amount = min(shed_max_local, shed_amount);
+                    shed_amount = min(shed_max_eff, shed_amount);
                     ufls_phi_eff = max(0, 1 - shed_amount);
+                    ufls_shed_max_eff = shed_max_eff;
                 end
 
                 if ufls_phi_eff < 1
@@ -679,6 +703,7 @@ parfor idxAlpha = 1:numA
             delay_injection_log.phi_global = phi_global;
             delay_injection_log.ufls_gamma_over = ufls_gamma_over;
             delay_injection_log.ufls_phi_eff = ufls_phi_eff;
+            delay_injection_log.ufls_shed_max_eff = ufls_shed_max_eff;
             %try
             results_sur = rundcpf(mpc_sur,mpopt);
             sur_P_branch = abs(results_sur.branch(:, 14)) + 1;

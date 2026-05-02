@@ -152,6 +152,44 @@ delay_cfg.power.ufls.tau_ref = 0.66;
 % 且当 α 增大、φ_global 上升时 shed 自动下降、φ_eff 单调上升。
 delay_cfg.power.ufls.shed_max = 0.85;
 
+% ----------------------------------------------------------------------
+% UFLS 单次切除量上限 与 α (容量裕度 / N-k 运行储备) 的耦合
+% ----------------------------------------------------------------------
+% 物理依据 (NERC PRC-006-5 §4 / IEEE Std C37.117 / IEC 60255-181)：
+%   单次 UFLS 切除深度 (shed_max) 与系统的"频率响应储备深度"成反比。
+%   - 低裕度系统（α 小、(1+α)·P_branch 容量逼近运行点）：一次扰动后
+%     无可调用的旋转储备/快启机组，必须靠"深 UFLS"（25%-40% 乃至接近
+%     文献给出的 70%-85% 工程上限）一次性砍掉负荷以止跌频率。
+%   - 高裕度系统（α 大、显著的 N-k 容量储备）：一次扰动后初级调频
+%     (primary regulation) 与短时备用即可托住频率，单次 UFLS 仅需
+%     "浅 UFLS"（一般 10%-15%、最深不超过 1/3 总负荷）。NERC PRC-006-5
+%     明确把"过深的单次切除"列为应避免的 anti-pattern，因为它会引发
+%     频率超调与电压塌陷的二次事件。
+%
+% 数学形式：shed_max_eff(α) = shed_max - (shed_max - shed_max_min) · α
+%   - α = 0 → shed_max_eff = shed_max = 0.85（与本 PR 之前完全一致，
+%     保证回归行为不变）；
+%   - α = 1 → shed_max_eff = shed_max_min = 0.65（高储备下浅切上限）；
+%   - 线性插值，单调递减、连续，符合"裕度越大、单次切除越浅"的工程直觉。
+%
+% 参数取值 0.65 的依据：仍在 NERC/IEEE 推荐的 0.6-0.85 工程区间内（区间
+% 上端对应"应急深 UFLS"、下端对应"常规分级 UFLS 总量"）。下界取 0.65
+% 而非更小，是为了不破坏 baseline / medium 的现状：在那两档下未截断的
+% shed = (1-φ)(1+γ) 通常 < 0.6（baseline ≈ 0.3-0.4，medium ≈ 0.5-0.6），
+% 因此 shed_max_eff = 0.65 也不会触发 cap，φ_eff 不变；只有 heavy
+% (uncapped shed ≈ 0.99) 上的 cap 会随 α 抬升而松动，正好让 α 的拓扑
+% 保护红利经由 φ_eff 通道传到 R1，恢复"R1 随 α 增大而增大"的单调性。
+%
+% 影响范围（依"全局视角"原则梳理上下游）：
+%   上游依赖：delay_cfg.power.ufls.shed_max（旧 cap 上界，本字段是其下界）；
+%             cascade 内 alpha（每个 alpha 循环里读到当前值）。
+%   下游影响：cascadeLogicdebug2gudingCC_bet_8.m 的 UFLS 块改用
+%             shed_max_eff 截断 shed_amount → 仅 heavy 场景 φ_eff 抬升
+%             → R1 (Fig2/Fig5) 的 heavy 曲线呈现正斜率；R3 因机组 η 公式
+%             不变而几乎不受影响；Fig1/Fig4/Fig6/Fig7/Fig8/Fig9 因 α=0
+%             与之前完全一致、α>0 仅 heavy 略有变化，不会破坏其结论。
+delay_cfg.power.ufls.shed_max_min = 0.65;
+
 % 指标开关
 delay_cfg.metrics.enable_r1 = true;
 delay_cfg.metrics.enable_r2 = false;
