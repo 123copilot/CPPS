@@ -627,6 +627,7 @@ parfor idxAlpha = 1:numA
                     % 读取参数（容错：缺省字段时回退到 0.30 / Φ_loss 的 τ_ref）
                     gamma_max = 0.30;
                     tau_ref_local = 0.22;
+                    shed_max_local = 0.85;  % NERC PRC-006 / IEEE C37.117 单次 UFLS 实际可切量上限
                     if isfield(delay_cfg.power, 'eta_plus') ...
                             && isfield(delay_cfg.power.eta_plus, 'tau_ref') ...
                             && ~isempty(delay_cfg.power.eta_plus.tau_ref)
@@ -641,14 +642,27 @@ parfor idxAlpha = 1:numA
                                 && ~isempty(delay_cfg.power.ufls.tau_ref)
                             tau_ref_local = delay_cfg.power.ufls.tau_ref;
                         end
+                        if isfield(delay_cfg.power.ufls, 'shed_max') ...
+                                && ~isempty(delay_cfg.power.ufls.shed_max)
+                            shed_max_local = delay_cfg.power.ufls.shed_max;
+                        end
                     end
+                    % 边界校验：shed_max 必须 ∈ [0, 1]（实际可切负荷比例的物理范围）。
+                    % 容错处理用户/上游误配置（例如填了 1.2 或负值）。
+                    shed_max_local = max(0, min(1, shed_max_local));
 
                     if tau_ref_local > 0
                         ufls_gamma_over = gamma_max * min(1, tau_sum_mean / tau_ref_local);
                     else
                         ufls_gamma_over = 0;
                     end
-                    ufls_phi_eff = max(0, 1 - (1 - phi_global) * (1 + ufls_gamma_over));
+                    % 物理上限钳位：实际切除量不能超过 shed_max（NERC PRC-006 经验上限）。
+                    % 这一步同时修正了原公式在 (1-φ_global)·(1+γ) ≥ 1 时
+                    % 把 φ_eff 硬切为 0 的非物理行为，使 heavy 场景 φ_eff
+                    % 始终 ≥ 1-shed_max=0.15，且随 φ_global 上升单调上升。
+                    shed_amount = (1 - phi_global) * (1 + ufls_gamma_over);
+                    shed_amount = min(shed_max_local, shed_amount);
+                    ufls_phi_eff = max(0, 1 - shed_amount);
                 end
 
                 if ufls_phi_eff < 1

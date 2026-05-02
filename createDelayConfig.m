@@ -79,7 +79,11 @@ delay_cfg.power.eta_plus.tau_ref = 0.22;   % 拥塞参考时延 (s, baseline τ_
 %   边界条件一致），避免 no_delay 场景出现 ~0.25% 的非物理基线偏差。
 % τ_crit_i = τ_crit_max · r_i, r_i = P_g(i)/max_j P_g(j) （方案 A）
 % 物理依据：WAMS 文献对最大机组的耐受时延上限 ~0.7-1.0s
-delay_cfg.power.eta_plus.tau_crit_max = 1.2;  % 最大机组临界总时延 (s)：抬高后 medium/heavy 中等容量机组脱离 Φ_crit≈0 死区，使 α 的拓扑选择能传导到 R1
+% 最大机组临界总时延 (s)：从 1.2→1.5（仍位于 WAMS 文献 0.7–1.5s 区间内）。
+% 目的：缓解 medium 场景下小机组（r_i=0.25 → 旧 τ_crit_i=0.30s）在 τ=0.44s
+%       处 Φ_crit 从 0.76 急塌至 0.14 的问题，避免 medium 起点 R1 与 baseline
+%       差距过大；no_delay 因归一化保持 1.000 不变。
+delay_cfg.power.eta_plus.tau_crit_max = 1.5;
 delay_cfg.power.eta_plus.beta         = 4;    % logistic 陡峭度：β=4 拓宽失稳过渡带，让机组分化连续而非阶跃
 delay_cfg.power.eta_plus.r_min        = 0.05; % 防止 τ_crit_i → 0 的下界
 
@@ -118,16 +122,35 @@ delay_cfg.power.enable_ufls = true;
 %                  对应工程实际"过切档位上限"）。
 %
 % 影响：在 cascadeLogic 内将 mpc_sur.bus(:,3:4) 缩放因子从 φ_global
-%   改为 φ_eff = max(0, 1 - (1-φ_global)·(1+γ(τ)))，使 light 等小缺额
-%   场景的拓扑保护红利无法超过 UFLS 过切带来的额外负荷损失，恢复
-%   R₁ 关于 τ 的单调性。
+%   改为 φ_eff = max(0, 1 - min(shed_max, (1-φ_global)·(1+γ(τ))))，
+%   使 light 等小缺额场景的拓扑保护红利无法超过 UFLS 过切带来的额外负荷
+%   损失（恢复 R₁ 关于 τ 的单调性），同时 shed_max 物理上限保证 heavy
+%   等大缺额场景不会被钳成 φ_eff=0（NERC PRC-006 经验：单次 UFLS 实际
+%   切除量上限 ≤ 0.85，超过即转入 islanding 程序，不在本模型范围内）。
 %
 % 参数取值：γ_max=0.30 取 NERC 推荐区间下界，最保守。
-%          tau_ref 默认复用 Φ_loss 的拥塞参考时延（=baseline τ_m+τ_e=0.22s）。
+%          tau_ref 显式取 0.66s（≈ heavy τ_m+τ_e 的 86%），与 Φ_loss
+%          的拥塞参考时延 0.22s 解耦——见下方 ufls.tau_ref 说明。
 delay_cfg.power.ufls.over_shed_max = 0.30;
-% tau_ref 留空则在运行时回退到 delay_cfg.power.eta_plus.tau_ref，保证
-% UFLS 过切归一化时延与 Φ_loss 拥塞归一化时延一致。如需独立调整可设值。
-delay_cfg.power.ufls.tau_ref = [];
+% tau_ref 显式设为 0.66s（≈ heavy 总时延 0.77s 的 86%、3× baseline τ_ref）。
+% 各场景参考总时延 τ_m+τ_e（来自 createDelayScenarioConfigs 的 scale 倍数）：
+%   no_delay = 0.00s, light = 0.11s, baseline = 0.22s,
+%   medium   = 0.44s, heavy = 0.77s
+% 解耦 UFLS γ 饱和点与 Φ_loss 拥塞参考点：
+%   - Φ_loss 反映链路丢包饱和（baseline 拥塞即接近硬件丢包上限，τ_ref=0.22s 合理）；
+%   - UFLS 过切反映频率响应迟滞，工程上需在更大时延才逼近过切上限。
+% 若两者共用 0.22s，则 baseline/medium/heavy 的 γ 全部饱和到 γ_max=0.30，
+% 三档之间无区分度；改用 0.66s 后梯度变为 baseline≈0.10 / medium≈0.20 / heavy=0.30。
+delay_cfg.power.ufls.tau_ref = 0.66;
+
+% UFLS 单次实际可切除负荷比例物理上限（NERC PRC-006 / IEEE Std C37.117）。
+% 真实电网 UFLS 单次切除量上限约 70%–85%，超过该阈值会触发 islanding /
+% black-start 程序而非继续切负荷。原"max(0, 1-(1-φ)·(1+γ))"公式在 heavy
+% (φ≈0.24, γ=0.30) 下会算出 shed=(1-0.24)·1.30=0.984 → φ_eff=0.016 → 级联
+% 推进一两轮即触地为 0，使 200 次试验 R1 全部为 0，这是非物理的。
+% 取保守上界 0.85 → φ_eff ≥ 0.15，heavy 场景 R1 不再硬钳为 0，
+% 且当 α 增大、φ_global 上升时 shed 自动下降、φ_eff 单调上升。
+delay_cfg.power.ufls.shed_max = 0.85;
 
 % 指标开关
 delay_cfg.metrics.enable_r1 = true;
