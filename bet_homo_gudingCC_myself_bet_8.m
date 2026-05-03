@@ -605,6 +605,19 @@ end
 legend(strrep(cellstr(scenario_labels), '_', '\_'), 'Location', 'best');
 hold off;
 
+% --- 图1+2 同框（Nature 双面板：上 ΔR1 柱 / 下 R1-α 折线，共享 x 轴） ---
+% 复用上面已聚合的 mean_R1（不重新计算），仅作展示层叠加。
+% 包在 try/catch 里以确保新增可视化绝不影响主流程数值结果。
+if exist('mean_R1', 'var') && exist('plotCombinedR1', 'file') == 2
+    try
+        plotCombinedR1(mean_R1, alpha_range, scenario_labels, ...
+            'Colors',  scenario_colors, ...
+            'FigName', 'Fig_Combined_R1');
+    catch ME_combined
+        warning('plotCombinedR1 调用失败（不影响主流程）：%s', ME_combined.message);
+    end
+end
+
 % --- 图3: R3 vs alpha 多场景对比 ---
 figure('Name', 'Fig3_R3_vs_alpha');
 hold on; grid on;

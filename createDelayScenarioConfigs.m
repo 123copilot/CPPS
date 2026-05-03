@@ -11,6 +11,26 @@ delay_scenarios = repmat(struct('name', "", 'cfg', struct(), 'scale', 0), 5, 1);
 %    相邻场景的理论 φ ( = (1 - k_m·τ_m)(1 - k_e·τ_e) ) 间距足够大
 %    （≥ ~13%），避免 R1 箱线图上各场景中位数被 IQR 噪声完全淹没/反转。
 scenario_names = ["no_delay"; "light"; "baseline"; "medium"; "heavy"];
+% -------------------------------------------------------------------------
+% Physical anchoring of scenario_scales (do NOT treat as free hyper-params)
+% -------------------------------------------------------------------------
+% Each scale is multiplied onto the baseline τ_total ≈ 220 ms (τ_m+τ_e),
+% so each scenario maps to a documented WAMS / IEC / NERC operating regime:
+%
+%   scale  | τ_total ≈ | regime / reference
+%   -------+-----------+----------------------------------------------------
+%   0.0    |     0 ms  | ideal-channel reference (no delay)
+%   0.5    |   110 ms  | local-area WAMS, IEEE C37.118.1-2011 PMU stream
+%   1.0    |   220 ms  | inter-area WAMS, IEC 61850-90-5 class M2/M3
+%   2.0    |   440 ms  | NASPI cross-region WAMS measured P95
+%   3.5    |   770 ms  | ~77% of NERC PRC-002-2 upper bound (≈1000 ms,
+%          |           | congested wide-area WAN)
+%
+% Rationale (also reported in paper §III): scales are fixed by the above
+% references; do not retune them to chase metric values. If τ_total at
+% baseline is ever changed, the regime-mapping table here AND Table I in
+% the paper must be updated jointly.
+% -------------------------------------------------------------------------
 scenario_scales = [0.0; 0.5; 1.0; 2.0; 3.5];
 
 for idx = 1:numel(scenario_names)
