@@ -23,7 +23,8 @@ scenario_names = ["no_delay"; "light"; "baseline"; "medium"; "heavy"];
 %   0.5    |   110 ms  | local-area WAMS, IEEE C37.118.1-2011 PMU stream
 %   1.0    |   220 ms  | inter-area WAMS, IEC 61850-90-5 class M2/M3
 %   2.0    |   440 ms  | NASPI cross-region WAMS measured P95
-%   3.5    |   770 ms  | ~77% of NERC PRC-002-2 upper bound (congested WAN)
+%   3.5    |   770 ms  | ~77% of NERC PRC-002-2 upper bound (≈1000 ms,
+%          |           | congested wide-area WAN)
 %
 % Rationale (also reported in paper §III): scales are fixed by the above
 % references; do not retune them to chase metric values. If τ_total at
