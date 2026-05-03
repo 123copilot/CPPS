@@ -119,6 +119,16 @@ P_bus = results_dc.bus(:,3) + 1;
 P_branch = abs(results_dc.branch(:,14)) + 1;
 initial_power_load = mpc.bus(:, 3);
 
+% R3 拓展样本集预计算：原始系统中所有 Pg>0 的发电机
+% （含 bus 编号与参考出力）。R3 每轮统计需要把"本轮已被切除/孤岛的
+% 发电机"也计入偏离样本（贡献 (P_ref=Pg, P_actual=0) 这个最大偏离项），
+% 这样 α 通过"线路阈值 (1+α)·rate 抬高 → 减少级联跳闸 → 减少被切机组数"
+% 与 UFLS shed_max_eff(α) 两条物理通路才能进入 R3。
+orig_gen_idx_R3 = find(abs(mpc.gen(:, 2)) > eps);
+orig_gen_bus_R3 = mpc.gen(orig_gen_idx_R3, 1);
+orig_gen_pg_R3  = mpc.gen(orig_gen_idx_R3, 2);
+n_orig_gen_R3   = numel(orig_gen_idx_R3);
+
 total_P_bus = sum(P_bus);
 total_P_branch = sum(P_branch);
 
@@ -231,6 +241,12 @@ for idxScenario = 1:num_delay_scenarios
             % 三种"用户失电"通道都被纳入，不会再出现 light < no_delay 的反转。
             P_ref_traj = [];
             P_actual_traj = [];
+            % R3 专用累计向量：与 R1 的 P_ref_traj 不同，这里额外把"本轮已被
+            % 切除/孤岛、未出现在 dil_round.gen_bus 中的原始发电机"以
+            % (P_ref=Pg, P_actual=0) 追加进来，使 α 通过"减少级联停机数"
+            % 的物理通路进入 R3。R1 的口径不变。
+            P_ref_traj_R3 = [];
+            P_actual_traj_R3 = [];
 
             if isempty(round_logs)
                 R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
@@ -264,12 +280,18 @@ for idxScenario = 1:num_delay_scenarios
                     dil_round = rl.delay_injection_log;
                     P_ref_round = [];
                     P_actual_round = [];
+                    present_orig_gen_round = false(n_orig_gen_R3, 1);
                     for gk_round = 1:numel(dil_round.eta)
                         match_round = find(mpc.gen(:,1) == dil_round.gen_bus(gk_round), 1, 'first');
                         if ~isempty(match_round) && abs(mpc.gen(match_round, 2)) > eps
                             pg_ref_round = mpc.gen(match_round, 2);
                             P_ref_round(end+1, 1) = pg_ref_round; %#ok<AGROW>
                             P_actual_round(end+1, 1) = pg_ref_round * dil_round.eta(gk_round); %#ok<AGROW>
+                            % 标记该原始发电机本轮"在场"（用于 R3 拓展样本集）
+                            pos_orig = find(orig_gen_idx_R3 == match_round, 1, 'first');
+                            if ~isempty(pos_orig)
+                                present_orig_gen_round(pos_orig) = true;
+                            end
                         end
                     end
                     if ~isempty(P_ref_round) && sum(P_ref_round) > 0
@@ -287,6 +309,16 @@ for idxScenario = 1:num_delay_scenarios
                         % 追加到全程轨迹累计向量，用于 R1_mat 的 φ_traj 计算
                         P_ref_traj = [P_ref_traj; P_ref_round]; %#ok<AGROW>
                         P_actual_traj = [P_actual_traj; P_actual_round]; %#ok<AGROW>
+                        % R3 拓展样本累计：本轮"在场"机组按 (Pg, Pg·η) 计入；
+                        % 本轮"未在场"（被切除/孤岛）的原始发电机按 (Pg, 0) 计入。
+                        % 这样 α 通过减少级联停机数 → 减少满偏离贡献项 → 降低 R3。
+                        P_ref_traj_R3    = [P_ref_traj_R3;    P_ref_round];    %#ok<AGROW>
+                        P_actual_traj_R3 = [P_actual_traj_R3; P_actual_round]; %#ok<AGROW>
+                        if any(~present_orig_gen_round)
+                            missing_pg = orig_gen_pg_R3(~present_orig_gen_round);
+                            P_ref_traj_R3    = [P_ref_traj_R3;    missing_pg];                   %#ok<AGROW>
+                            P_actual_traj_R3 = [P_actual_traj_R3; zeros(numel(missing_pg), 1)];  %#ok<AGROW>
+                        end
                         % 以 w_r=ΣP_ref_round 加权累计 φ_eff 与 surviving_load
                         w_r = sum(P_ref_round);
                         traj_w_total = traj_w_total + w_r;
@@ -365,17 +397,18 @@ for idxScenario = 1:num_delay_scenarios
                 R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
             end
 
-            % R3：与 R1 同口径，使用全程累计 (P_ref_traj, P_actual_traj)，
-            % 而不是仅取最后一轮 round_logs{end}。这样可消除"最后一轮幸存
-            % 发电机数极少 → R3 高方差/对 α 不敏感"的问题。
-            % 注：每台发电机在 P_ref_traj 中出现的次数 = 其参与轮次数，因此
-            % 长期暴露在延迟下的机组在 RMS 中权重更大，与 R1 的 φ_traj
-            % 加权口径一致（见上面 :221-226 的注释）。
-            % computeR3Deviation 的 P_ref==0 守卫已由上游 :259 的
-            % abs(mpc.gen(match_round,2)) > eps 过滤保证，故此处只需
-            % 检查非空与正和。
-            if ~isempty(P_ref_traj) && sum(P_ref_traj) > 0
-                R3_mat(idxAlpha, trial, idxScenario) = computeR3Deviation(P_actual_traj, P_ref_traj);
+            % R3：使用拓展样本集 (P_ref_traj_R3, P_actual_traj_R3)。
+            % 与 R1 的 P_ref_traj 区别在于：本轮被切除/孤岛、未出现在
+            % delay_injection_log 中的原始发电机以 (P_ref=Pg, P_actual=0)
+            % 计入。这样 R3 公式不变（仍是发电机功率相对参考值的偏离），
+            % 但 α 通过两条物理通路进入 R3：
+            %   (1) (1+α)·rate 抬高线路阈值 → 减少过载跳闸 → 减少被切机组数
+            %   (2) UFLS shed_max_eff(α) 收紧 → 减少后续轮次新增失效机组数
+            % 两条通路恰与 R1 的 α 响应通路一致，口径统一。
+            % computeR3Deviation 的 P_ref==0 守卫由 orig_gen_pg_R3 的
+            % abs(.)>eps 过滤与上游 :269 的同样过滤共同保证。
+            if ~isempty(P_ref_traj_R3) && sum(P_ref_traj_R3) > 0
+                R3_mat(idxAlpha, trial, idxScenario) = computeR3Deviation(P_actual_traj_R3, P_ref_traj_R3);
             end
 
             % 聚合延迟因素
