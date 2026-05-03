@@ -665,6 +665,21 @@ end
 legend(strrep(cellstr(scenario_labels), '_', '\_'), 'Location', 'best');
 hold off;
 
+% --- 图3 同框（Nature 双面板：上 ΔR3 柱 / 下 R3-α 折线，共享 x 轴） ---
+% 与 plotCombinedR1 对偶；R3 越小越好，故 ΔR3 = R3^scenario - R3^no_delay，
+% 这样"正值条柱 = 该时延场景比 no_delay 更差"，与 R1 图的视觉读数规则一致。
+% 复用上面已聚合的 mean_R3（不重新计算），仅作展示层叠加。
+% 包在 try/catch 里以确保新增可视化绝不影响主流程数值结果。
+if exist('mean_R3', 'var') && exist('plotCombinedR3', 'file') == 2
+    try
+        plotCombinedR3(mean_R3, alpha_range, scenario_labels, ...
+            'Colors',  scenario_colors, ...
+            'FigName', 'Fig_Combined_R3');
+    catch ME_combined_R3
+        warning('plotCombinedR3 调用失败（不影响主流程）：%s', ME_combined_R3.message);
+    end
+end
+
 %% ====================================================================
 %% 逐轮时间序列分析
 %% ====================================================================
