@@ -1,15 +1,16 @@
 function fig = plotCombinedR3(mean_R3, alpha_range, scenario_labels, varargin)
-%PLOTCOMBINEDR3  Nature-style stacked-panel figure: ΔR3 bar (top) +
-% R3-vs-α lines (bottom), sharing a single x-axis (α).
+%PLOTCOMBINEDR3  Single-axes overlay figure: ΔR3 grouped bars and
+% R3-vs-α lines drawn on the SAME axes using dual Y-axes
+% (left Y = R3 lines, right Y = ΔR3 bars).
 %
 % Mirror of plotCombinedR1, but adapted to R3's "smaller-is-better"
 % semantics. Whereas R1 uses ΔR1 = R1^{no_delay} - R1^{scenario}
-% (a positive bar means the delay regime degraded R1), here we use
+% (positive bar = delay regime hurt R1), here we use
 %
 %       ΔR3 = R3^{scenario} - R3^{no_delay}
 %
-% so that a positive bar still means the delay regime is *worse* than
-% the ideal no-delay reference. This keeps the visual reading rule
+% so a positive bar still means the delay regime is *worse* than the
+% ideal no-delay reference. The visual reading rule is therefore
 % identical across the R1 and R3 combined figures: bars rising above
 % zero ⇒ delays hurt the metric.
 %
@@ -23,16 +24,15 @@ function fig = plotCombinedR3(mean_R3, alpha_range, scenario_labels, varargin)
 % Optional name/value pairs:
 %   'Colors'   : numS × 3 RGB matrix (default: lines(numS)).
 %   'StdR3'    : numA × numS std matrix; if non-empty, ±SD shaded bands
-%                are drawn under each line in the bottom panel.
+%                are drawn under each line on the LEFT axis.
 %   'OutFile'  : char/string path for vector export (PDF). Skipped if "".
 %   'FigName'  : figure Name (default 'Fig_Combined_R3').
-%   'YLim'     : 1×2 ylim for the bottom (R3 line) panel; default 'auto'.
+%   'YLim'     : 1×2 ylim for the LEFT (R3 line) axis; default 'auto'.
 %
 % Notes:
-%   * Numerical inputs are consumed read-only; this function performs no
-%     aggregation and never mutates upstream data.
-%   * Two visually-aligned tiles share the α axis via linkaxes; only the
-%     bottom tile renders α tick labels (Nature stacked-panel convention).
+%   * Numerical inputs are consumed read-only.
+%   * Bars are slightly transparent so the lines remain readable; the
+%     bar group is centered on each α tick (BarWidth=0.7).
 %   * If 'no_delay' is missing the function falls back to the first column
 %     as reference and emits a warning rather than erroring out.
 
@@ -62,7 +62,7 @@ delay_idx       = setdiff(1:numS, nodelay_idx);
 % "positive bar = delay scenario performs worse than no_delay".
 delta_R3_bar    = mean_R3(:, delay_idx) - mean_R3(:, nodelay_idx);  % numA × (numS-1)
 disp_labels     = strrep(cellstr(scenario_labels), '_', '\_');
-delay_disp_lbls = disp_labels(delay_idx); %#ok<NASGU>
+delay_disp_lbls = disp_labels(delay_idx);
 
 % --- Colors ---------------------------------------------------------------
 if isempty(opt.Colors)
@@ -72,35 +72,31 @@ else
     colors = opt.Colors;
 end
 
-% --- Figure & layout (top:bottom = 2:3, Nature-style) --------------------
+% --- Figure & single-axes layout (dual Y) --------------------------------
 fig = figure('Name', char(opt.FigName), 'Color', 'w', ...
-    'Position', [100, 100, 1100, 720]);
-tl  = tiledlayout(fig, 5, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
+    'Position', [100, 100, 1100, 620]);
+ax = axes(fig);
+hold(ax, 'on');
+xv = alpha_range(:);
 
-% --- Top panel: grouped ΔR3 bars -----------------------------------------
-ax_top = nexttile(tl, 1, [2 1]);
-hb     = bar(ax_top, alpha_range(:), delta_R3_bar, 'grouped', ...
-             'BarWidth', 0.85);
-hold(ax_top, 'on');
+% --- RIGHT Y axis: grouped ΔR3 bars (drawn first → behind lines) --------
+yyaxis(ax, 'right');
+hb = bar(ax, xv, delta_R3_bar, 'grouped', 'BarWidth', 0.7);
 for s = 1:numel(hb)
     hb(s).FaceColor = colors(delay_idx(s), :);
-    hb(s).FaceAlpha = 0.85;
-    hb(s).EdgeColor = [0.2 0.2 0.2];
+    hb(s).FaceAlpha = 0.45;          % translucent so lines stay readable
+    hb(s).EdgeColor = [0.25 0.25 0.25];
     hb(s).LineWidth = 0.4;
 end
-yline(ax_top, 0, '--', 'Color', [0 0 0 0.5], 'LineWidth', 0.5);
-ylabel(ax_top, '\DeltaR_3 = R_3^{scenario} - R_3^{no\_delay}', 'FontSize', 9);
-set(ax_top, 'FontSize', 8, 'XTickLabel', [], 'Box', 'on');
-grid(ax_top, 'on');
-title(ax_top, sprintf('R_3 sensitivity to \\alpha across delay regimes (numA=%d, numS=%d) — smaller R_3 is better; positive \\DeltaR_3 means delay scenario is worse than no\\_delay', ...
-    numA, numS), 'FontSize', 10, 'FontWeight', 'normal');
-hold(ax_top, 'off');
+yline(ax, 0, '--', 'Color', [0 0 0 0.45], 'LineWidth', 0.6, ...
+    'HandleVisibility', 'off');
+ylabel(ax, '\DeltaR_3 = R_3^{scenario} - R_3^{no\_delay}   (bars)', ...
+    'FontSize', 10);
+ax.YAxis(2).Color = [0.25 0.25 0.25];
 
-% --- Bottom panel: R3 vs α lines (optionally with ±SD shading) -----------
-ax_bot = nexttile(tl, 3, [3 1]);
-hold(ax_bot, 'on');
+% --- LEFT Y axis: R3-vs-α lines (drawn on top of bars) ------------------
+yyaxis(ax, 'left');
 hl = gobjects(numS, 1);
-xv = alpha_range(:);
 for s = 1:numS
     yv = mean_R3(:, s);
     if ~isempty(opt.StdR3)
@@ -110,32 +106,42 @@ for s = 1:numS
             xb = xv(valid);
             yb = yv(valid);
             sb = sd(valid);
-            fill(ax_bot, [xb; flipud(xb)], [yb - sb; flipud(yb + sb)], ...
-                colors(s, :), 'FaceAlpha', 0.15, 'EdgeColor', 'none', ...
+            fill(ax, [xb; flipud(xb)], [yb - sb; flipud(yb + sb)], ...
+                colors(s, :), 'FaceAlpha', 0.12, 'EdgeColor', 'none', ...
                 'HandleVisibility', 'off');
         end
     end
-    hl(s) = plot(ax_bot, xv, yv, '-o', 'LineWidth', 1.5, ...
+    hl(s) = plot(ax, xv, yv, '-o', 'LineWidth', 1.8, ...
         'Color', colors(s, :), 'MarkerFaceColor', colors(s, :), ...
         'MarkerSize', 5);
 end
-xlabel(ax_bot, '\alpha', 'FontSize', 9);
-ylabel(ax_bot, 'R_3 (cascade deviation)', 'FontSize', 9);
-set(ax_bot, 'FontSize', 8, 'Box', 'on');
-grid(ax_bot, 'on');
+ylabel(ax, 'R_3 (cascade deviation)   (lines)', 'FontSize', 10);
 if ~isempty(opt.YLim)
-    ylim(ax_bot, opt.YLim);
+    ylim(ax, opt.YLim);
 end
-lgd = legend(ax_bot, hl, disp_labels, 'Location', 'eastoutside', ...
-    'FontSize', 8, 'Box', 'off');
+ax.YAxis(1).Color = [0.10 0.10 0.10];
+
+% --- Common x-axis & cosmetics ------------------------------------------
+xlabel(ax, '\alpha', 'FontSize', 10);
+xlim(ax, [min(xv) - 0.04, max(xv) + 0.04]);
+set(ax, 'FontSize', 9, 'Box', 'on');
+grid(ax, 'on');
+title(ax, sprintf(['R_3 sensitivity to \\alpha across delay regimes ' ...
+    '(numA=%d, numS=%d)  —  smaller R_3 is better; ' ...
+    'lines: R_3 (left axis); bars: \\DeltaR_3 (right axis)'], ...
+    numA, numS), 'FontSize', 10, 'FontWeight', 'normal');
+
+% --- Combined legend (lines + bars) -------------------------------------
+line_legend_lbls = strcat(disp_labels, ' (R_3)');
+bar_legend_lbls  = strcat(delay_disp_lbls, ' (\DeltaR_3)');
+all_handles      = [hl(:); hb(:)];
+all_labels       = [line_legend_lbls(:); bar_legend_lbls(:)];
+lgd = legend(ax, all_handles, all_labels, 'Location', 'eastoutside', ...
+    'FontSize', 8, 'Box', 'off', 'NumColumns', 1);
 lgd.Title.String = 'Scenario'; %#ok<NASGU>
-hold(ax_bot, 'off');
+hold(ax, 'off');
 
-% --- Share x-axis ---------------------------------------------------------
-linkaxes([ax_top, ax_bot], 'x');
-xlim(ax_bot, [min(xv) - 0.02, max(xv) + 0.02]);
-
-% --- Optional vector export ----------------------------------------------
+% --- Optional vector export ---------------------------------------------
 if strlength(string(opt.OutFile)) > 0
     try
         exportgraphics(fig, char(opt.OutFile), ...
