@@ -1,6 +1,15 @@
 function fig = plotCombinedR1(mean_R1, alpha_range, scenario_labels, varargin)
-%PLOTCOMBINEDR1  Nature-style stacked-panel figure: ΔR1 bar (top) +
-% R1-vs-α lines (bottom), sharing a single x-axis (α).
+%PLOTCOMBINEDR1  Single-axes overlay figure: ΔR1 grouped bars and
+% R1-vs-α lines drawn on the SAME axes using dual Y-axes
+% (left Y = R1 lines, right Y = ΔR1 bars).
+%
+% This is intentionally NOT a stacked two-panel figure; the bars and
+% lines share the same x-axis (α) AND the same plot box, with two
+% independent vertical scales (yyaxis left / right). That is the
+% standard journal convention for showing a metric value alongside
+% its delta-vs-reference on a common abscissa.
+%
+% ΔR1 = R1^{no_delay} - R1^{scenario}     (positive bar ⇒ delay regime degrades R1)
 %
 % Inputs (required):
 %   mean_R1         : numA × numS matrix of per-(α, scenario) mean R1.
@@ -12,15 +21,14 @@ function fig = plotCombinedR1(mean_R1, alpha_range, scenario_labels, varargin)
 % Optional name/value pairs:
 %   'Colors'   : numS × 3 RGB matrix (default: lines(numS)).
 %   'StdR1'    : numA × numS std matrix; if non-empty, ±SD shaded bands
-%                are drawn under each line in the bottom panel.
+%                are drawn under each line on the LEFT axis.
 %   'OutFile'  : char/string path for vector export (PDF). Skipped if "".
 %   'FigName'  : figure Name (default 'Fig_Combined_R1').
 %
 % Notes:
-%   * Numerical inputs are consumed read-only; this function performs no
-%     aggregation and never mutates upstream data.
-%   * Two visually-aligned tiles share the α axis via linkaxes; only the
-%     bottom tile renders α tick labels (Nature stacked-panel convention).
+%   * Numerical inputs are consumed read-only.
+%   * Bars are slightly transparent so the lines remain readable; the
+%     bar group is centered on each α tick (BarWidth=0.7).
 %   * If 'no_delay' is missing the function falls back to the first column
 %     as reference and emits a warning rather than erroring out.
 
@@ -57,35 +65,31 @@ else
     colors = opt.Colors;
 end
 
-% --- Figure & layout (top:bottom = 1:1.5, Nature-style) -------------------
+% --- Figure & single-axes layout (dual Y) --------------------------------
 fig = figure('Name', char(opt.FigName), 'Color', 'w', ...
-    'Position', [100, 100, 1100, 720]);
-tl  = tiledlayout(fig, 5, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
+    'Position', [100, 100, 1100, 620]);
+ax = axes(fig);
+hold(ax, 'on');
+xv = alpha_range(:);
 
-% --- Top panel: grouped ΔR1 bars -----------------------------------------
-ax_top = nexttile(tl, 1, [2 1]);
-hb     = bar(ax_top, alpha_range(:), delta_R1_bar, 'grouped', ...
-             'BarWidth', 0.85);
-hold(ax_top, 'on');
+% --- RIGHT Y axis: grouped ΔR1 bars (drawn first → behind lines) --------
+yyaxis(ax, 'right');
+hb = bar(ax, xv, delta_R1_bar, 'grouped', 'BarWidth', 0.7);
 for s = 1:numel(hb)
     hb(s).FaceColor = colors(delay_idx(s), :);
-    hb(s).FaceAlpha = 0.85;
-    hb(s).EdgeColor = [0.2 0.2 0.2];
+    hb(s).FaceAlpha = 0.45;          % translucent so lines stay readable
+    hb(s).EdgeColor = [0.25 0.25 0.25];
     hb(s).LineWidth = 0.4;
 end
-yline(ax_top, 0, '--', 'Color', [0 0 0 0.5], 'LineWidth', 0.5);
-ylabel(ax_top, '\DeltaR_1 = R_1^{no\_delay} - R_1^{scenario}', 'FontSize', 9);
-set(ax_top, 'FontSize', 8, 'XTickLabel', [], 'Box', 'on');
-grid(ax_top, 'on');
-title(ax_top, sprintf('R_1 sensitivity to \\alpha across delay regimes (numA=%d, numS=%d)', ...
-    numA, numS), 'FontSize', 10, 'FontWeight', 'normal');
-hold(ax_top, 'off');
+yline(ax, 0, '--', 'Color', [0 0 0 0.45], 'LineWidth', 0.6, ...
+    'HandleVisibility', 'off');
+ylabel(ax, '\DeltaR_1 = R_1^{no\_delay} - R_1^{scenario}   (bars)', ...
+    'FontSize', 10);
+ax.YAxis(2).Color = [0.25 0.25 0.25];
 
-% --- Bottom panel: R1 vs α lines (optionally with ±SD shading) -----------
-ax_bot = nexttile(tl, 3, [3 1]);
-hold(ax_bot, 'on');
+% --- LEFT Y axis: R1-vs-α lines (drawn on top of bars) ------------------
+yyaxis(ax, 'left');
 hl = gobjects(numS, 1);
-xv = alpha_range(:);
 for s = 1:numS
     yv = mean_R1(:, s);
     if ~isempty(opt.StdR1)
@@ -95,31 +99,41 @@ for s = 1:numS
             xb = xv(valid);
             yb = yv(valid);
             sb = sd(valid);
-            fill(ax_bot, [xb; flipud(xb)], [yb - sb; flipud(yb + sb)], ...
-                colors(s, :), 'FaceAlpha', 0.15, 'EdgeColor', 'none', ...
+            fill(ax, [xb; flipud(xb)], [yb - sb; flipud(yb + sb)], ...
+                colors(s, :), 'FaceAlpha', 0.12, 'EdgeColor', 'none', ...
                 'HandleVisibility', 'off');
         end
     end
-    hl(s) = plot(ax_bot, xv, yv, '-o', 'LineWidth', 1.5, ...
+    hl(s) = plot(ax, xv, yv, '-o', 'LineWidth', 1.8, ...
         'Color', colors(s, :), 'MarkerFaceColor', colors(s, :), ...
         'MarkerSize', 5);
 end
-yline(ax_bot, 1, ':', 'Color', [0 0 0 0.3], 'LineWidth', 0.5);
-ylim(ax_bot, [0 1.05]);
-xlabel(ax_bot, '\alpha', 'FontSize', 9);
-ylabel(ax_bot, 'R_1 (delay-adjusted)', 'FontSize', 9);
-set(ax_bot, 'FontSize', 8, 'Box', 'on');
-grid(ax_bot, 'on');
-lgd = legend(ax_bot, hl, disp_labels, 'Location', 'eastoutside', ...
-    'FontSize', 8, 'Box', 'off');
+yline(ax, 1, ':', 'Color', [0 0 0 0.3], 'LineWidth', 0.5, ...
+    'HandleVisibility', 'off');
+ylim(ax, [0 1.05]);
+ylabel(ax, 'R_1 (delay-adjusted)   (lines)', 'FontSize', 10);
+ax.YAxis(1).Color = [0.10 0.10 0.10];
+
+% --- Common x-axis & cosmetics ------------------------------------------
+xlabel(ax, '\alpha', 'FontSize', 10);
+xlim(ax, [min(xv) - 0.04, max(xv) + 0.04]);
+set(ax, 'FontSize', 9, 'Box', 'on');
+grid(ax, 'on');
+title(ax, sprintf(['R_1 sensitivity to \\alpha across delay regimes ' ...
+    '(numA=%d, numS=%d)  —  lines: R_1 (left axis); bars: \\DeltaR_1 (right axis)'], ...
+    numA, numS), 'FontSize', 10, 'FontWeight', 'normal');
+
+% --- Combined legend (lines + bars) -------------------------------------
+line_legend_lbls = strcat(disp_labels, ' (R_1)');
+bar_legend_lbls  = strcat(delay_disp_lbls, ' (\DeltaR_1)');
+all_handles      = [hl(:); hb(:)];
+all_labels       = [line_legend_lbls(:); bar_legend_lbls(:)];
+lgd = legend(ax, all_handles, all_labels, 'Location', 'eastoutside', ...
+    'FontSize', 8, 'Box', 'off', 'NumColumns', 1);
 lgd.Title.String = 'Scenario'; %#ok<NASGU>
-hold(ax_bot, 'off');
+hold(ax, 'off');
 
-% --- Share x-axis ---------------------------------------------------------
-linkaxes([ax_top, ax_bot], 'x');
-xlim(ax_bot, [min(xv) - 0.02, max(xv) + 0.02]);
-
-% --- Optional vector export ----------------------------------------------
+% --- Optional vector export ---------------------------------------------
 if strlength(string(opt.OutFile)) > 0
     try
         exportgraphics(fig, char(opt.OutFile), ...
