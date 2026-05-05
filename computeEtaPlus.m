@@ -1,11 +1,13 @@
-function [eta, components] = computeEtaPlus(tau_m, tau_e, n_hops_total, P_g_ref_i, P_g_ref_max, delay_cfg)
+function [eta, components] = computeEtaPlus(tau_m, tau_e, n_hops_total, P_g_ref_i, P_g_ref_max, delay_cfg, alpha)
 %COMPUTEETAPLUS  四因子时延效率 η⁺ = Φ_sat · Φ_loss · Φ_crit
 %
 % 公式
 % ----
 %   Φ_sat  = exp(-a_m · max(0, τ_m - τ_m0) - a_e · max(0, τ_e - τ_e0))
-%   Φ_loss = (1 - p_hop_eff)^n_hops_total
-%       p_hop_eff = p_hop · min(1, (τ_m + τ_e)/τ_ref)
+%   Φ_loss = 1 - (1 - Φ_loss_single)^k_eff(α)   （并行冗余可靠性，IEEE Std 493 / IEC 61078）
+%       Φ_loss_single = (1 - p_hop_eff)^n_hops_total
+%       p_hop_eff     = p_hop · min(1, (τ_m + τ_e)/τ_ref)
+%       k_eff(α)      = 1 + α · (k_max - 1)         （k_max 来自 delay_cfg.power.eta_plus.k_max_redundancy）
 %   Φ_crit = (1 + exp(-β)) / (1 + exp(β · ((τ_m + τ_e) - τ_crit_i)/τ_crit_i))
 %       （归一化形式：等价于 logistic 除以其 τ=0 处取值，保证 Φ_crit(0)=1）
 %   τ_crit_i = τ_crit_max · r_i,   r_i = P_g_ref_i / P_g_ref_max  （方案 A）
@@ -23,6 +25,10 @@ function [eta, components] = computeEtaPlus(tau_m, tau_e, n_hops_total, P_g_ref_
 %   P_g_ref_i           标量：发电机 i 的参考有功 (MW)，可为 0
 %   P_g_ref_max         标量：所有发电机参考有功最大值 (MW)，必须 > 0
 %   delay_cfg           struct：必须包含 .power.eta_plus 子结构
+%   alpha               (可选) 标量：N-k 容量裕度系数 ∈ [0,1]，
+%                        映射到 CC↔gen 通信通道的等效并行冗余度
+%                        k_eff(α) = 1 + α·(k_max-1)。默认 0（=单通道，
+%                        与历史版本 Φ_loss 严格回归，所有 α=0 历史结果不变）。
 %
 % 返回
 % ----
@@ -42,6 +48,25 @@ if ~isfield(delay_cfg, 'power') || ~isfield(delay_cfg.power, 'eta_plus')
         'delay_cfg.power.eta_plus 子结构缺失，请检查 createDelayConfig。');
 end
 ep = delay_cfg.power.eta_plus;
+
+% alpha 为可选参数：未提供时按 0 处理 → k_eff=1 → Φ_loss 退化为单路径形式，
+% 与历史版本（无并行冗余）逐位等价，保证既有调用点（α=0 工况、未传 α 的
+% 后处理脚本如 computeCascadeR3Metric）行为不变。
+if nargin < 7 || isempty(alpha)
+    alpha = 0;
+end
+if any(alpha(:) < 0) || any(alpha(:) > 1)
+    error('computeEtaPlus:invalidAlpha', 'alpha 必须 ∈ [0, 1]。');
+end
+% k_max_redundancy 字段缺省时回退到 1（=无冗余），同样保证旧 cfg 仍可运行。
+if isfield(ep, 'k_max_redundancy') && ~isempty(ep.k_max_redundancy)
+    k_max = ep.k_max_redundancy;
+else
+    k_max = 1;
+end
+if k_max < 1
+    error('computeEtaPlus:invalidKmax', 'k_max_redundancy 必须 ≥ 1。');
+end
 
 required_fields = {'a_m', 'a_e', 'tau_m0', 'tau_e0', 'p_hop', 'tau_ref', ...
     'tau_crit_max', 'beta', 'r_min'};
@@ -74,10 +99,10 @@ tilde_tau_e = max(0, tau_e - ep.tau_e0);
 phi_sat = exp(-ep.a_m .* tilde_tau_m - ep.a_e .* tilde_tau_e);
 phi_sat = max(0, min(1, phi_sat));
 
-% --- Φ_loss: 跳数累积可靠性 --------------------------------------------
-% 物理依据：网络拥塞导致的端到端时延与丢包率正相关（M/M/1 排队论：
-% 利用率 ρ↑ → 队列时延↑ 且 丢包率↑；ITU-T G.1010 同样指出丢包率
-% 随拥塞时延近似线性增长直至饱和）。因此把单跳丢包率写成关于
+% --- Φ_loss: 跳数累积可靠性 + α-参数化并行冗余 -------------------------
+% 物理依据 (单路径 p_hop_eff)：网络拥塞导致的端到端时延与丢包率正相关
+% （M/M/1 排队论：利用率 ρ↑ → 队列时延↑ 且 丢包率↑；ITU-T G.1010 同样
+% 指出丢包率随拥塞时延近似线性增长直至饱和）。因此把单跳丢包率写成关于
 % 端到端总时延的连续单调函数，并以 baseline 总时延 τ_ref 作为达到
 % 标称丢包率 p_hop 的拥塞参考点：
 %   p_hop_eff = p_hop · min(1, (τ_m + τ_e) / τ_ref)
@@ -88,6 +113,17 @@ phi_sat = max(0, min(1, phi_sat));
 %       场景间获得可分辨的 Φ_loss 阶梯，取代旧版"非零即 p_hop"的阶跃；
 %   (3) (τ_m+τ_e) ≥ τ_ref 后 min(·) 截断到 1，避免 p_hop_eff>p_hop
 %       带来的非物理外推（拥塞超过参考后丢包率仍受链路硬件上限约束）。
+%
+% 物理依据 (并行冗余 k_eff(α))：N-k 容量裕度 α 在通信层的孪生概念是
+% 双 / 多通道冗余（IEC 61850-90-4 PRP/HSR、ITU-T G.8032 环网保护、
+% IEEE PSRC C-14 双通道远动、NERC CIP-012 通信冗余要求）。把 α 映射到
+% CC↔gen 之间等效独立并行路径数：
+%   k_eff(α) = 1 + α · (k_max - 1),   α ∈ [0,1],  k_max 默认 2 (PRP 双通道)
+% 对 k 条独立路径用 IEEE Std 493 §3.2 / IEC 61078 RBD 标准的 parallel
+% reliability 公式：Φ_loss = 1 - (1 - Φ_loss_single)^k_eff，从而：
+%   - α=0 → k_eff=1 → Φ_loss = Φ_loss_single（与历史版本严格回归）；
+%   - α↑ → k_eff↑ → Φ_loss↑ → η↑ → R₃↓（α 的冗余红利经 R₃ 体现）；
+%   - τ↑ → Φ_loss_single↓ → 即便 k_eff 增大乘积仍下降（保留时延危害）。
 tau_total = tau_m + tau_e;
 if ep.tau_ref > 0
     p_hop_eff = ep.p_hop * min(1, tau_total / ep.tau_ref);
@@ -96,7 +132,11 @@ else
     p_hop_eff = ep.p_hop * double(tau_total > 0);
 end
 p_hop_eff = max(0, min(1, p_hop_eff));
-phi_loss = (1 - p_hop_eff) .^ n_hops_total;
+phi_loss_single = (1 - p_hop_eff) .^ n_hops_total;
+phi_loss_single = max(0, min(1, phi_loss_single));
+% 并行冗余：k_eff(α) = 1 + α·(k_max-1)。α=0 ⇒ k_eff=1 ⇒ phi_loss = phi_loss_single。
+k_eff = 1 + alpha * (k_max - 1);
+phi_loss = 1 - (1 - phi_loss_single) .^ k_eff;
 phi_loss = max(0, min(1, phi_loss));
 
 % --- Φ_crit: 异质 logistic 临界因子（方案 A 归一化 + τ=0 基线归一化）----
@@ -137,6 +177,8 @@ if nargout > 1
     components = struct( ...
         'phi_sat', phi_sat, ...
         'phi_loss', phi_loss, ...
+        'phi_loss_single', phi_loss_single, ...
+        'k_eff', k_eff, ...
         'phi_crit', phi_crit, ...
         'r_i', r_i, ...
         'tau_crit_i', tau_crit_i);

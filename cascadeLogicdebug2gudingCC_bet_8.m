@@ -553,7 +553,7 @@ parfor idxAlpha = 1:numA
                         n_hops_total_g = n_hops_up + n_hops_down;
                         P_g_ref_i = mpc.gen(gIdx, 2);  % 原始参考有功（mpc 是函数输入，整个 cascade 仅写 mpc_sur，mpc 始终只读）
                         eta_g = computeEtaPlus(tau_m_g, tau_e_g, ...
-                            n_hops_total_g, P_g_ref_i, P_g_ref_max_for_eta, delay_cfg);
+                            n_hops_total_g, P_g_ref_i, P_g_ref_max_for_eta, delay_cfg, alpha);
                     else
                         % legacy 旧线性公式，用于回归对比
                         [eta_g, ~, ~] = computePowerDelayEfficiency(tau_m_g, tau_e_g, ...
