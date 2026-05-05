@@ -73,6 +73,25 @@ delay_cfg.power.eta_plus.tau_e0 = 0.03;    % 执行死区 (s, AVR/governor 死�
 delay_cfg.power.eta_plus.p_hop  = 0.05;    % 单跳丢包率（拥塞参考点处）
 delay_cfg.power.eta_plus.tau_ref = 0.22;   % 拥塞参考时延 (s, baseline τ_m+τ_e)
 
+% Φ_loss 并行冗余：k_eff(α) = 1 + α·(k_max_redundancy - 1)
+% 物理依据：N-k 容量裕度 α 在通信层的孪生概念是双 / 多通道冗余
+%   - IEC 61850-90-4 PRP/HSR：双通道（k=2，事实标准）；
+%   - ITU-T G.8032 环网保护：单环主备 ≈ k=2；
+%   - IEEE PSRC C-14 双通道远动；
+%   - NERC CIP-012 通信冗余要求：跨控制中心备用通道。
+% 把 α 映射到等效独立并行路径数后，按 IEEE Std 493 "Gold Book" §3.2 /
+% IEC 61078 RBD 的 parallel reliability 公式：
+%   Φ_loss = 1 - (1 - Φ_loss_single)^k_eff(α)
+% 关键性质：
+%   - α=0 → k_eff=1 → Φ_loss = Φ_loss_single（与历史版本严格回归，
+%     所有 α=0 历史图 Fig1/Fig4/Fig6/Fig7/Fig8/Fig9 数值不变）；
+%   - α↑ → k_eff↑ → Φ_loss↑ → η↑ → R₃↓（α 通过 R₃ 显式体现冗余红利）；
+%   - τ↑ → Φ_loss_single↓ → 即便 k_eff 增大乘积仍下降（保留时延危害）。
+% 取 k_max=2 而非 3 的理由：PRP 是事实标准，最保守；α=1 时
+%   k_eff=2 让 Φ_loss 翻倍式提升但绝不超出单跳可靠性的物理上限，
+%   且不会在 light 场景下让 R₃ 变化过激。
+delay_cfg.power.eta_plus.k_max_redundancy = 2;
+
 % Φ_crit: (1 + exp(-β)) / (1 + exp(β·((τ_m+τ_e) - τ_crit_i)/τ_crit_i))
 %   归一化形式 = 原始 logistic / logistic(τ=0)，保证 Φ_crit(τ=0) = 1，
 %   即理想信道下机组不被临界因子降额（与 Φ_sat、Φ_loss 在 τ=0 处的
