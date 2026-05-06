@@ -93,9 +93,29 @@ if ep.p_hop < 0 || ep.p_hop > 1
     error('computeEtaPlus:invalidPhop', 'p_hop 必须 ∈ [0, 1]。');
 end
 
-% --- Φ_sat: 指数饱和 + 死区 ---------------------------------------------
-tilde_tau_m = max(0, tau_m - ep.tau_m0);
-tilde_tau_e = max(0, tau_e - ep.tau_e0);
+% --- Φ_sat: 指数饱和 + α-参数化死区 -------------------------------------
+% 物理依据 (α-参数化死区, "杠杆 2")：N-k 容量裕度 α 在测量/控制层的孪生
+% 概念是"系统越冗余 → 越能容忍更宽的测量平滑窗 / 更迟钝的控制死区"。
+%   - IEEE C37.118.1：PMU 报告间隔 10ms–100ms 可调，高储备 → 用慢档；
+%   - NERC PRC-024-3：发电机频率耐受窗 ≥60ms，高储备系统留出更深裕度；
+%   - IEC 60255-181：UFLS 死区档位 50–100ms 可调。
+% 数学形式：τ_m0_eff(α) = τ_m0 + tau_m0_alpha_gain · α，τ_e0 同构。
+% 关键边界：α=0 → τ_m0_eff=τ_m0（与历史版本严格回归）；τ=0 → Φ_sat=1。
+% 字段缺省时回退为零（关闭"杠杆 2"），保证旧 cfg 仍可运行。
+if isfield(ep, 'tau_m0_alpha_gain') && ~isempty(ep.tau_m0_alpha_gain)
+    tau_m0_alpha_gain = ep.tau_m0_alpha_gain;
+else
+    tau_m0_alpha_gain = 0;
+end
+if isfield(ep, 'tau_e0_alpha_gain') && ~isempty(ep.tau_e0_alpha_gain)
+    tau_e0_alpha_gain = ep.tau_e0_alpha_gain;
+else
+    tau_e0_alpha_gain = 0;
+end
+tau_m0_eff = ep.tau_m0 + tau_m0_alpha_gain .* alpha;
+tau_e0_eff = ep.tau_e0 + tau_e0_alpha_gain .* alpha;
+tilde_tau_m = max(0, tau_m - tau_m0_eff);
+tilde_tau_e = max(0, tau_e - tau_e0_eff);
 phi_sat = exp(-ep.a_m .* tilde_tau_m - ep.a_e .* tilde_tau_e);
 phi_sat = max(0, min(1, phi_sat));
 
@@ -176,6 +196,8 @@ eta = max(0, min(1, eta));
 if nargout > 1
     components = struct( ...
         'phi_sat', phi_sat, ...
+        'tau_m0_eff', tau_m0_eff, ...
+        'tau_e0_eff', tau_e0_eff, ...
         'phi_loss', phi_loss, ...
         'phi_loss_single', phi_loss_single, ...
         'k_eff', k_eff, ...

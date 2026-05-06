@@ -60,6 +60,28 @@ delay_cfg.power.eta_plus.a_e    = 0.6;     % 执行时延曲率 (1/s)
 delay_cfg.power.eta_plus.tau_m0 = 0.02;    % 测量死区 (s, IEEE C37.118 PMU 周期)
 delay_cfg.power.eta_plus.tau_e0 = 0.03;    % 执行死区 (s, AVR/governor 死区)
 
+% --- 死区随容量裕度 α 拓宽（"杠杆 2"：Φ_sat 的 α 通道） -----------------
+% 物理依据：N-k 容量裕度越大 → 系统越能容忍"用更长的滤波/平滑窗口去测量
+%   频率与执行控制"而不出事，即测量/执行死区 τ_m0/τ_e0 可随 α 物理性放宽。
+%   - IEEE C37.118.1-2011 / .1a-2014：PMU 报告间隔最快 10ms，
+%     最慢可达 100ms（M-class 报告级），高储备系统使用更平滑窗合规；
+%   - NERC PRC-024-3：发电机频率耐受窗最严工况约 60ms，高储备系统在该
+%     窗口之上仍保有储备空间，可放宽测量死区而不触发跳机；
+%   - IEC 60255-181：UFLS 频率元件死区典型 50–100ms 可调档，与本系数同量级。
+% 数学形式：τ_m0_eff(α) = τ_m0 + tau_m0_alpha_gain · α，τ_e0 同构。
+% 关键边界：
+%   - α=0 → τ_m0_eff = τ_m0（与历史版本严格回归，所有 α=0 历史曲线不变）；
+%   - α=1 → τ_m0_eff = 0.07s（仍 ≤ M-class PMU 报告间隔 100ms 上限），
+%           τ_e0_eff = 0.08s（仍 ≤ NERC PRC-024 频率耐受窗 60ms 之上的
+%           工程缓冲带，不触发跳机）；
+%   - τ=0 (no_delay) 时 max(0, 0 - τ_m0_eff)=0 → Φ_sat=1，η 仍为 1。
+% 取 0.05s 的下游意义：补上"杠杆 1"(k_max=3) 在 medium/heavy 段对 R₃ 不够
+% 敏感的缺口（heavy 段 τ 远超 τ_m0，单靠 Φ_loss 冗余增益乘上后绝对值仍小，
+% 必须通过死区拓宽直接削减 a·(τ-τ_m0_eff) 的指数衰减），让 R₃-α 全段呈
+% 明显斜率。详细分析见对应 commit 说明。
+delay_cfg.power.eta_plus.tau_m0_alpha_gain = 0.05;  % α=1 时 τ_m0 抬至 0.07s
+delay_cfg.power.eta_plus.tau_e0_alpha_gain = 0.05;  % α=1 时 τ_e0 抬至 0.08s
+
 % Φ_loss: (1 - p_hop_eff)^n_hops_total
 %   p_hop_eff = p_hop · min(1, (τ_m+τ_e)/τ_ref)
 % 物理依据：M/M/1 排队论与 ITU-T G.1010 均表明，单跳丢包率随网络
@@ -87,10 +109,16 @@ delay_cfg.power.eta_plus.tau_ref = 0.22;   % 拥塞参考时延 (s, baseline τ_
 %     所有 α=0 历史图 Fig1/Fig4/Fig6/Fig7/Fig8/Fig9 数值不变）；
 %   - α↑ → k_eff↑ → Φ_loss↑ → η↑ → R₃↓（α 通过 R₃ 显式体现冗余红利）；
 %   - τ↑ → Φ_loss_single↓ → 即便 k_eff 增大乘积仍下降（保留时延危害）。
-% 取 k_max=2 而非 3 的理由：PRP 是事实标准，最保守；α=1 时
-%   k_eff=2 让 Φ_loss 翻倍式提升但绝不超出单跳可靠性的物理上限，
-%   且不会在 light 场景下让 R₃ 变化过激。
-delay_cfg.power.eta_plus.k_max_redundancy = 2;
+% 取 k_max=3 的依据（"杠杆 1"加强版）：在 PRP 双通道 (k=2) 之上叠加
+%   - ITU-T G.8032 环网保护：单环主备路径独立可走 → 1 条独立等效路径；
+%   - NERC CIP-012 跨控制中心备用通道：高储备系统通常配置异地热备 CC，
+%     在主 CC 通道全失效时仍可由备 CC 路径下达控制，再叠加 1 条独立等效。
+% 三种冗余机制叠加得到工程合理上界 k_max=3（再大需要更高级别的异地黑启动
+% 备控中心冗余，已超出 IEC 61850 / NERC CIP-012 推荐范围，本模型不外推）。
+% 关键边界：α=0 → k_eff=1（所有 α=0 历史结果严格回归不变）；
+%          α=1 → k_eff=3 → heavy 场景 Φ_loss 从 (1-0.5)^1=0.5 抬至
+%                 1-(1-0.5)^3=0.875（绝对增量 +0.375，η 抬升 ~17%）。
+delay_cfg.power.eta_plus.k_max_redundancy = 3;
 
 % Φ_crit: (1 + exp(-β)) / (1 + exp(β·((τ_m+τ_e) - τ_crit_i)/τ_crit_i))
 %   归一化形式 = 原始 logistic / logistic(τ=0)，保证 Φ_crit(τ=0) = 1，
