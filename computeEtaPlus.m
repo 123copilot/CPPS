@@ -112,8 +112,9 @@ if isfield(ep, 'tau_e0_alpha_gain') && ~isempty(ep.tau_e0_alpha_gain)
 else
     tau_e0_alpha_gain = 0;
 end
-tau_m0_eff = ep.tau_m0 + tau_m0_alpha_gain .* alpha;
-tau_e0_eff = ep.tau_e0 + tau_e0_alpha_gain .* alpha;
+% alpha 在上方校验为标量（[0,1]），此处使用普通乘法即可。
+tau_m0_eff = ep.tau_m0 + tau_m0_alpha_gain * alpha;
+tau_e0_eff = ep.tau_e0 + tau_e0_alpha_gain * alpha;
 tilde_tau_m = max(0, tau_m - tau_m0_eff);
 tilde_tau_e = max(0, tau_e - tau_e0_eff);
 phi_sat = exp(-ep.a_m .* tilde_tau_m - ep.a_e .* tilde_tau_e);
