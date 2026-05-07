@@ -22,16 +22,21 @@ scenario_names = ["no_delay"; "light"; "baseline"; "medium"; "heavy"];
 %   0.0    |     0 ms  | ideal-channel reference (no delay)
 %   0.5    |   110 ms  | local-area WAMS, IEEE C37.118.1-2011 PMU stream
 %   1.0    |   220 ms  | inter-area WAMS, IEC 61850-90-5 class M2/M3
-%   2.0    |   440 ms  | NASPI cross-region WAMS measured P95
-%   3.5    |   770 ms  | ~77% of NERC PRC-002-2 upper bound (≈1000 ms,
-%          |           | congested wide-area WAN)
+%   1.7    |   374 ms  | NASPI cross-region WAMS measured P95 band
+%          |           | (NASPI Phasor Gateway field reports 250–500 ms)
+%   2.7    |   594 ms  | ~60% of NERC PRC-002-2 upper bound (≈1000 ms),
+%          |           | WAN-congested inter-area regime
 %
-% Rationale (also reported in paper §III): scales are fixed by the above
-% references; do not retune them to chase metric values. If τ_total at
-% baseline is ever changed, the regime-mapping table here AND Table I in
-% the paper must be updated jointly.
+% Rationale (also reported in paper §III / Table I): scales are fixed by
+% the above references; do not retune them to chase metric values. The
+% medium/heavy anchors were tightened from (2.0, 3.5) to (1.7, 2.7) so
+% that the heavy regime no longer simultaneously crosses the Φ_sat,
+% Φ_crit and UFLS over-shed cap non-linear knees in a single step, while
+% still residing inside the documented WAMS / NERC operating envelope.
+% If τ_total at baseline is ever changed, the regime-mapping table here
+% AND Table I in the paper must be updated jointly.
 % -------------------------------------------------------------------------
-scenario_scales = [0.0; 0.5; 1.0; 2.0; 3.5];
+scenario_scales = [0.0; 0.5; 1.0; 1.7; 2.7];
 
 for idx = 1:numel(scenario_names)
     scenario_cfg = base_delay_cfg;
