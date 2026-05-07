@@ -208,6 +208,11 @@ A1_unreachable_ratio_mat = NaN(numA, num_samples, num_delay_scenarios);
 
 % 逐轮时间序列
 round_ts_R1_cell = cell(numA, num_samples, num_delay_scenarios);
+% R3 逐轮时间序列：第 r 轮的值 = "截至第 r 轮的累计 R3"
+% （cumulative-to-round R3，使用 P_ref_traj(1:end_r), P_actual_traj(1:end_r)
+%  调用 computeR3Deviation 计算）。该定义与 Fig4 中 "R1 截至第 r 轮的状态"
+%  语义对齐，使 ΔR3 热力图可与 ΔR1 热力图直接对比。
+round_ts_R3_cell = cell(numA, num_samples, num_delay_scenarios);
 round_ts_eta_cell = cell(numA, num_samples, num_delay_scenarios);
 round_ts_unreachable_cell = cell(numA, num_samples, num_delay_scenarios);
 round_ts_n_failed_power_cell = cell(numA, num_samples, num_delay_scenarios);
@@ -248,6 +253,7 @@ for idxScenario = 1:num_delay_scenarios
 
             num_rounds = numel(round_logs);
             round_R1_values = NaN(num_rounds, 1);
+            round_R3_values = NaN(num_rounds, 1);
             round_eta_values = NaN(num_rounds, 1);
             round_unreachable_values = NaN(num_rounds, 1);
             round_n_fp = NaN(num_rounds, 1);
@@ -302,6 +308,13 @@ for idxScenario = 1:num_delay_scenarios
                         traj_w_total = traj_w_total + w_r;
                         traj_w_phi_eff_sum = traj_w_phi_eff_sum + w_r * phi_eff_round;
                         traj_w_surv_load_sum = traj_w_surv_load_sum + w_r * surv_load_round;
+
+                        % 截至本轮的累计 R3：与 trial 末 R3 同口径
+                        % （容量加权 NRMSE，computeR3Deviation 内部公式），
+                        % 但样本集仅截至当前 P_ref_traj/P_actual_traj。
+                        % 这样 round_R3_values(end) ≡ trial 级 R3，便于回归校验。
+                        round_R3_values(roundIdx) = computeR3Deviation( ...
+                            P_actual_traj, P_ref_traj);
                     else
                         round_R1_values(roundIdx) = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
                     end
@@ -349,6 +362,7 @@ for idxScenario = 1:num_delay_scenarios
 
             % 保存逐轮时间序列
             round_ts_R1_cell{idxAlpha, trial, idxScenario} = round_R1_values;
+            round_ts_R3_cell{idxAlpha, trial, idxScenario} = round_R3_values;
             round_ts_eta_cell{idxAlpha, trial, idxScenario} = round_eta_values;
             round_ts_unreachable_cell{idxAlpha, trial, idxScenario} = round_unreachable_values;
             round_ts_n_failed_power_cell{idxAlpha, trial, idxScenario} = round_n_fp;
@@ -680,6 +694,7 @@ else
 
 % --- 对齐并求均值 (LVCF填充) ---
 mean_ts_R1 = NaN(global_max_rounds, numA, num_delay_scenarios);
+mean_ts_R3 = NaN(global_max_rounds, numA, num_delay_scenarios);
 mean_ts_eta = NaN(global_max_rounds, numA, num_delay_scenarios);
 mean_ts_unreachable = NaN(global_max_rounds, numA, num_delay_scenarios);
 mean_ts_n_failed_power = NaN(global_max_rounds, numA, num_delay_scenarios);
@@ -687,6 +702,7 @@ mean_ts_n_failed_power = NaN(global_max_rounds, numA, num_delay_scenarios);
 for idxScenario = 1:num_delay_scenarios
     for idxAlpha = 1:numA
         padded_R1 = NaN(num_samples, global_max_rounds);
+        padded_R3 = NaN(num_samples, global_max_rounds);
         padded_eta = NaN(num_samples, global_max_rounds);
         padded_ur = NaN(num_samples, global_max_rounds);
         padded_fp = NaN(num_samples, global_max_rounds);
@@ -697,6 +713,10 @@ for idxScenario = 1:num_delay_scenarios
             n = numel(ts_r1);
 
             padded_R1(trial, 1:n) = ts_r1(:)';
+            ts_r3_trial = round_ts_R3_cell{idxAlpha, trial, idxScenario};
+            if ~isempty(ts_r3_trial)
+                padded_R3(trial, 1:n) = ts_r3_trial(:)';
+            end
             padded_eta(trial, 1:n) = round_ts_eta_cell{idxAlpha, trial, idxScenario}(:)';
             padded_ur(trial, 1:n) = round_ts_unreachable_cell{idxAlpha, trial, idxScenario}(:)';
             padded_fp(trial, 1:n) = round_ts_n_failed_power_cell{idxAlpha, trial, idxScenario}(:)';
@@ -705,6 +725,11 @@ for idxScenario = 1:num_delay_scenarios
             if n < global_max_rounds
                 last_r1 = ts_r1(find(~isnan(ts_r1), 1, 'last'));
                 if ~isempty(last_r1), padded_R1(trial, n+1:global_max_rounds) = last_r1; end
+
+                if ~isempty(ts_r3_trial)
+                    last_r3 = ts_r3_trial(find(~isnan(ts_r3_trial), 1, 'last'));
+                    if ~isempty(last_r3), padded_R3(trial, n+1:global_max_rounds) = last_r3; end
+                end
 
                 ts_eta = round_ts_eta_cell{idxAlpha, trial, idxScenario};
                 last_eta = ts_eta(find(~isnan(ts_eta), 1, 'last'));
@@ -719,6 +744,7 @@ for idxScenario = 1:num_delay_scenarios
         end
 
         mean_ts_R1(:, idxAlpha, idxScenario) = mean(padded_R1, 1, 'omitnan')';
+        mean_ts_R3(:, idxAlpha, idxScenario) = mean(padded_R3, 1, 'omitnan')';
         mean_ts_eta(:, idxAlpha, idxScenario) = mean(padded_eta, 1, 'omitnan')';
         mean_ts_unreachable(:, idxAlpha, idxScenario) = mean(padded_ur, 1, 'omitnan')';
         mean_ts_n_failed_power(:, idxAlpha, idxScenario) = mean(padded_fp, 1, 'omitnan')';
@@ -759,6 +785,28 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
     xlabel('Cascade Round');
     ylabel('\alpha');
     title('Delay Penalty Heatmap (\DeltaR_1 = R_1^{no\_delay} - R_1^{heavy})');
+    colormap(hot);
+
+    % --- 图4b: R3 延迟惩罚热力图 (alpha x round) ---
+    % 与 R1 版本对称：R3 越小越好，故惩罚定义为 ΔR3 = R3_heavy - R3_nodelay，
+    % 正值 = heavy 比 no_delay 跟踪偏差更大（被时延"惩罚"得更重），
+    % 与 ΔR1 (= R1_nodelay - R1_heavy) 同号语义（正值都代表 heavy 更差）。
+    % R3_round_r 的定义：截至第 r 轮累计 (P_ref_traj, P_actual_traj) 的容量加权 NRMSE。
+    delta_delay_heatmap_R3 = NaN(plot_max_round, numA);
+    for idxA = 1:numA
+        R3_nd = mean_ts_R3(1:plot_max_round, idxA, nodelay_idx);
+        R3_hv = mean_ts_R3(1:plot_max_round, idxA, heavy_idx);
+        delta_delay_heatmap_R3(:, idxA) = R3_hv - R3_nd;
+    end
+
+    figure('Name', 'Fig4b_Delay_Penalty_Heatmap_R3');
+    imagesc(1:plot_max_round, alpha_range, delta_delay_heatmap_R3');
+    set(gca, 'YDir', 'normal');
+    cb = colorbar;
+    cb.Label.String = '\DeltaR_3^{delay}';
+    xlabel('Cascade Round');
+    ylabel('\alpha');
+    title('Delay Penalty Heatmap (\DeltaR_3 = R_3^{heavy} - R_3^{no\_delay})');
     colormap(hot);
 end
 
