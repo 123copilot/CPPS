@@ -10,7 +10,10 @@ function [eta, components] = computeEtaPlus(tau_m, tau_e, n_hops_total, P_g_ref_
 %       k_eff(α)      = 1 + α · (k_max - 1)         （k_max 来自 delay_cfg.power.eta_plus.k_max_redundancy）
 %   Φ_crit = (1 + exp(-β)) / (1 + exp(β · ((τ_m + τ_e) - τ_crit_i)/τ_crit_i))
 %       （归一化形式：等价于 logistic 除以其 τ=0 处取值，保证 Φ_crit(0)=1）
-%   τ_crit_i = τ_crit_max · r_i,   r_i = P_g_ref_i / P_g_ref_max  （方案 A）
+%   τ_crit_i = τ_crit_max_eff(α) · r_i,   r_i = P_g_ref_i / P_g_ref_max  （方案 A）
+%   τ_crit_max_eff(α) = τ_crit_max + tau_crit_max_alpha_gain · α
+%       （"杠杆 3"：N-k 容量裕度 → 物理性放宽小机组临界耐受窗，
+%        来自 NERC PRC-006-5 / NASPI WAMS Roadmap / IEEE PES PSDP TR-80）
 %
 % 物理含义
 % --------
@@ -175,6 +178,18 @@ phi_loss = max(0, min(1, phi_loss));
 % 拐点、大 τ 趋于 0、按容量异质化），又把 τ=0 的基线钉在 1，让
 % 三因子乘积 η⁺ 在 no_delay 场景下严格等于 1，符合工程内涵。
 r_i = max(0, P_g_ref_i) / P_g_ref_max;
+% τ_crit_max α-参数化（"杠杆 3"）：高储备 → 临界耐受窗物理性放宽。
+% 字段缺省时回退为 0（关闭"杠杆 3"），保证旧 cfg 与 α=0 工况严格回归。
+if isfield(ep, 'tau_crit_max_alpha_gain') && ~isempty(ep.tau_crit_max_alpha_gain)
+    tau_crit_max_alpha_gain = ep.tau_crit_max_alpha_gain;
+else
+    tau_crit_max_alpha_gain = 0;
+end
+% alpha 已在上方校验为标量 ∈ [0,1]，普通乘法即可。
+tau_crit_max_eff = ep.tau_crit_max + tau_crit_max_alpha_gain * alpha;
+if tau_crit_max_eff <= 0
+    error('computeEtaPlus:invalidTauCritEff', 'tau_crit_max_eff 必须 > 0。');
+end
 if r_i <= ep.r_min
     % 机组几乎无出力（含 r_i = 0 的情形）→ P_ref ≈ 0 已让结果归零，
     % Φ_crit 取 1 以避免 (τ-0)/0 = Inf。case39 中所有 r_i ≥ 0.25，
@@ -182,7 +197,7 @@ if r_i <= ep.r_min
     phi_crit = 1;
     tau_crit_i = NaN;
 else
-    tau_crit_i = ep.tau_crit_max * r_i;
+    tau_crit_i = tau_crit_max_eff * r_i;
     arg = ep.beta * ((tau_m + tau_e) - tau_crit_i) / tau_crit_i;
     % 归一化：分子 (1+exp(-β)) 即原 logistic 在 τ=0 处的分母，
     % 因此 phi_crit(τ=0) = (1+exp(-β))/(1+exp(-β)) = 1 严格成立。
@@ -204,6 +219,7 @@ if nargout > 1
         'k_eff', k_eff, ...
         'phi_crit', phi_crit, ...
         'r_i', r_i, ...
+        'tau_crit_max_eff', tau_crit_max_eff, ...
         'tau_crit_i', tau_crit_i);
 end
 end

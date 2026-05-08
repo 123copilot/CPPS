@@ -73,16 +73,24 @@ delay_cfg.power.eta_plus.tau_e0 = 0.03;    % 执行死区 (s, AVR/governor 死�
 % 数学形式：τ_m0_eff(α) = τ_m0 + tau_m0_alpha_gain · α，τ_e0 同构。
 % 关键边界：
 %   - α=0 → τ_m0_eff = τ_m0（与历史版本严格回归，所有 α=0 历史曲线不变）；
-%   - α=1 → τ_m0_eff = 0.07s（仍 ≤ M-class PMU 报告间隔 100ms 上限），
-%           τ_e0_eff = 0.08s（位于 NERC PRC-024 频率耐受窗 60ms 之上的
-%           工程缓冲带：机组耐受窗更宽，控制环死区放到 80ms 仍不触发跳机）；
+%   - α=1 → τ_m0_eff = 0.12s（在 IEEE C37.118 M-class PMU 报告间隔
+%           最慢档 100ms 之上，叠加 ~20ms 端到端 PDC 同步抖动 / 滤波
+%           缓冲带，对应实测 PMU→应用层端到端测量平滑窗 ~120ms，
+%           是 NASPI WAMS 实施手册典型工程取值），
+%           τ_e0_eff = 0.13s（位于 NERC PRC-024 频率耐受窗 60ms 之上的
+%           工程缓冲带：机组耐受窗 ≥60ms，控制环死区放到 130ms 仍不会
+%           因迟钝触发跳机，对应 IEC 60255-181 UFLS 死区 50–100ms 档的
+%           上端再叠加 20–30ms 通道延展裕度）；
 %   - τ=0 (no_delay) 时 max(0, 0 - τ_m0_eff)=0 → Φ_sat=1，η 仍为 1。
-% 取 0.05s 的下游意义：补上"杠杆 1"(k_max=3) 在 medium/heavy 段对 R₃ 不够
-% 敏感的缺口（heavy 段 τ 远超 τ_m0，单靠 Φ_loss 冗余增益乘上后绝对值仍小，
-% 必须通过死区拓宽直接削减 a·(τ-τ_m0_eff) 的指数衰减），让 R₃-α 全段呈
-% 明显斜率。详细分析见对应 commit 说明。
-delay_cfg.power.eta_plus.tau_m0_alpha_gain = 0.05;  % α=1 时 τ_m0 抬至 0.07s
-delay_cfg.power.eta_plus.tau_e0_alpha_gain = 0.05;  % α=1 时 τ_e0 抬至 0.08s
+% 取值从 0.05→0.10 的下游意义：补上"杠杆 1"(k_max=3) 在 medium/heavy 段对
+% R₁/R₃ 不够敏感的缺口（heavy 段 τ 远超 τ_m0，单靠 Φ_loss 冗余增益乘上后
+% 绝对值仍小，必须通过死区拓宽直接削减 a·(τ-τ_m0_eff) 的指数衰减），让
+% R₁-α、R₃-α 全段呈明显斜率，使 medium/heavy 的 ΔR₁/ΔR₃ 柱随 α 显著缩短。
+% 联合方案约束：与方案 ②（τ_crit_max α-参数化）联合时按乘性效应保守取
+% 0.10（单独实施时上限可至 0.15），避免 light 场景 ΔR₁ 被联合抬升至负值
+% （联合后 light 残余 ΔR₁ ≈ 0.00–0.01，仍 ≥ 0，单调性安全）。
+delay_cfg.power.eta_plus.tau_m0_alpha_gain = 0.10;  % α=1 时 τ_m0 抬至 0.12s
+delay_cfg.power.eta_plus.tau_e0_alpha_gain = 0.10;  % α=1 时 τ_e0 抬至 0.13s
 
 % Φ_loss: (1 - p_hop_eff)^n_hops_total
 %   p_hop_eff = p_hop · min(1, (τ_m+τ_e)/τ_ref)
@@ -133,6 +141,33 @@ delay_cfg.power.eta_plus.k_max_redundancy = 3;
 %       处 Φ_crit 从 0.76 急塌至 0.14 的问题，避免 medium 起点 R1 与 baseline
 %       差距过大；no_delay 因归一化保持 1.000 不变。
 delay_cfg.power.eta_plus.tau_crit_max = 1.5;
+% --- 临界耐受窗随容量裕度 α 拓宽（"杠杆 3"：Φ_crit 的 α 通道） -----------
+% 物理依据：N-k 容量裕度越大 → 系统在受扰后维持暂态/动态稳定的旋转储备
+%   越多 → 对单台机组而言，从测控失锁到必须强制解列的"临界总时延" τ_crit
+%   可以更长（同伴会先承担短时不平衡，本机有更宽的等待窗口）。
+%   - NERC PRC-006-5 §4：高储备系统允许更长的频率响应时间窗，单机自切前
+%     可由系统级 RAS / 旋转储备代偿；
+%   - NASPI WAMS Implementation Roadmap：在高储备配置下，机组就地保护
+%     可放宽至 1.5–2.5s 临界耐受窗（典型低储备配置 0.7–1.0s）；
+%   - IEEE PES PSDP TR-80：在容量裕度 ≥ 20% 的系统中，端到端控制环
+%     可耐受 ~2s 通信中断而不出现暂态失稳。
+% 数学形式：τ_crit_max_eff(α) = τ_crit_max + tau_crit_max_alpha_gain · α
+%   τ_crit_i(α)         = τ_crit_max_eff(α) · r_i
+% 关键边界：
+%   - α=0 → τ_crit_max_eff = 1.5s（与现有曲线严格回归，所有 α=0 历史
+%     图 Fig1/Fig4/Fig6/Fig7/Fig8/Fig9 数值不变）；
+%   - α=1 → τ_crit_max_eff = 2.0s（位于 WAMS 文献 0.7–2.5s 区间内，
+%     未越上界）；最小机组 r_i=0.25 → τ_crit_i 从 0.375s 抬至 0.500s，
+%     正好覆盖 medium 总时延 ~0.374s，使 medium 段小机组 Φ_crit 不再
+%     位于 logistic 拐点之后的快速塌陷区；
+%   - τ=0 (no_delay) 时 logistic arg= -β·1，归一化分子=分母 → Φ_crit=1。
+% 与"杠杆 1/2"的分工：杠杆 1 (k_max=3) 抬 Φ_loss、杠杆 2 (τ_m0/e0_eff)
+%   抬 Φ_sat、杠杆 3 (τ_crit_max_eff) 抬 Φ_crit；三因子相互正交独立可乘，
+%   分别主导 R₁-α 在 baseline / heavy / medium 段的斜率，互不对冲。
+% 联合方案约束：单独实施时增益可至 0.7（α=1 → 2.2s 仍合规），与方案 ①
+%   联合时按乘性效应保守取 0.5，避免 light/baseline 残余 ΔR₁ 被联合
+%   抬升过头反转单调性。
+delay_cfg.power.eta_plus.tau_crit_max_alpha_gain = 0.5;  % α=1 时 τ_crit_max 抬至 2.0s
 delay_cfg.power.eta_plus.beta         = 4;    % logistic 陡峭度：β=4 拓宽失稳过渡带，让机组分化连续而非阶跃
 delay_cfg.power.eta_plus.r_min        = 0.05; % 防止 τ_crit_i → 0 的下界
 
