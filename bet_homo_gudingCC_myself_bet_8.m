@@ -208,10 +208,14 @@ A1_unreachable_ratio_mat = NaN(numA, num_samples, num_delay_scenarios);
 
 % 逐轮时间序列
 round_ts_R1_cell = cell(numA, num_samples, num_delay_scenarios);
-% R3 逐轮时间序列：第 r 轮的值 = "截至第 r 轮的累计 R3"
-% （cumulative-to-round R3，使用 P_ref_traj(1:end_r), P_actual_traj(1:end_r)
-%  调用 computeR3Deviation 计算）。该定义与 Fig4 中 "R1 截至第 r 轮的状态"
-%  语义对齐，使 ΔR3 热力图可与 ΔR1 热力图直接对比。
+% R3 逐轮时间序列：第 r 轮的值 = "本轮（仅本轮）在场机组的容量加权 NRMSE"
+% （per-round R3，使用 P_ref_round, P_actual_round 调用 computeR3Deviation）。
+% 与 R1 的逐轮口径对齐（R1 也是逐轮、不累计），让 Fig4b 的 ΔR3 热力图与
+% Fig4 的 ΔR1 热力图在"轮次"维度上同语义可比，从而能一致地判断"哪一轮
+% 时延危害最大"。注意：该 per-round 序列只用于 Fig4b 热力图；
+% trial 级 R3（R3_mat，line ~402）以及 plotCombinedR3 仍使用全程累计
+% (P_ref_traj, P_actual_traj) 的 NRMSE，口径不变（向后兼容所有现有图）。
+% 因此 round_ts_R3_cell 的最后一项不再恒等于 R3_mat（这是预期变化）。
 round_ts_R3_cell = cell(numA, num_samples, num_delay_scenarios);
 round_ts_eta_cell = cell(numA, num_samples, num_delay_scenarios);
 round_ts_unreachable_cell = cell(numA, num_samples, num_delay_scenarios);
@@ -309,12 +313,15 @@ for idxScenario = 1:num_delay_scenarios
                         traj_w_phi_eff_sum = traj_w_phi_eff_sum + w_r * phi_eff_round;
                         traj_w_surv_load_sum = traj_w_surv_load_sum + w_r * surv_load_round;
 
-                        % 截至本轮的累计 R3：与 trial 末 R3 同口径
-                        % （容量加权 NRMSE，computeR3Deviation 内部公式），
-                        % 但样本集仅截至当前 P_ref_traj/P_actual_traj。
-                        % 这样 round_R3_values(end) ≡ trial 级 R3，便于回归校验。
+                        % 本轮 per-round R3：仅以本轮在场机组样本
+                        % (P_ref_round, P_actual_round) 计算容量加权 NRMSE，
+                        % 不累计前序轮次。这样 Fig4b 热力图与 Fig4 (R1) 的
+                        % "轮次"维度同语义——两者都反映"该轮单独承受的时延伤害"，
+                        % 从而能一致地指示危害峰所在的轮次。
+                        % 仅用于 round_ts_R3_cell → mean_ts_R3 → Fig4b；
+                        % trial 级 R3_mat 与 plotCombinedR3 走累计口径，互不影响。
                         round_R3_values(roundIdx) = computeR3Deviation( ...
-                            P_actual_traj, P_ref_traj);
+                            P_actual_round, P_ref_round);
                     else
                         round_R1_values(roundIdx) = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
                     end
@@ -791,7 +798,12 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
     % 与 R1 版本对称：R3 越小越好，故惩罚定义为 ΔR3 = R3_heavy - R3_nodelay，
     % 正值 = heavy 比 no_delay 跟踪偏差更大（被时延"惩罚"得更重），
     % 与 ΔR1 (= R1_nodelay - R1_heavy) 同号语义（正值都代表 heavy 更差）。
-    % R3_round_r 的定义：截至第 r 轮累计 (P_ref_traj, P_actual_traj) 的容量加权 NRMSE。
+    % R3_round_r 的定义：本轮（仅本轮）在场机组的容量加权 NRMSE
+    % （per-round，非累计）。与 Fig4 的逐轮 R1 口径完全对齐，可直接
+    % 横向比较"哪一轮时延危害最大"——两图应给出同一轮次峰值。
+    % 注：此处使用 mean_ts_R3（来自 round_ts_R3_cell，per-round 口径），
+    % 与 plotCombinedR3 使用的 mean_R3（来自 R3_mat，全程累计口径）不同，
+    % 二者各自独立，互不污染。
     delta_delay_heatmap_R3 = NaN(plot_max_round, numA);
     for idxA = 1:numA
         R3_nd = mean_ts_R3(1:plot_max_round, idxA, nodelay_idx);
@@ -806,7 +818,7 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
     cb.Label.String = '\DeltaR_3^{delay}';
     xlabel('Cascade Round');
     ylabel('\alpha');
-    title('Delay Penalty Heatmap (\DeltaR_3 = R_3^{heavy} - R_3^{no\_delay})');
+    title('Delay Penalty Heatmap (per-round \DeltaR_3 = R_3^{heavy} - R_3^{no\_delay})');
     colormap(hot);
 end
 
