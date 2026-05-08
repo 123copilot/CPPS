@@ -319,7 +319,8 @@ for idxScenario = 1:num_delay_scenarios
                         % "轮次"维度同语义——两者都反映"该轮单独承受的时延伤害"，
                         % 从而能一致地指示危害峰所在的轮次。
                         % 仅用于 round_ts_R3_cell → mean_ts_R3 → Fig4b；
-                        % trial 级 R3_mat 与 plotCombinedR3 走累计口径，互不影响。
+                        % trial 级 R3_mat（见下方 line ~402，全程累计 NRMSE）
+                        % 与 plotCombinedR3 走累计口径，互不影响。
                         round_R3_values(roundIdx) = computeR3Deviation( ...
                             P_actual_round, P_ref_round);
                     else
