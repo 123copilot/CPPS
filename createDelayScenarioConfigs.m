@@ -58,6 +58,13 @@ for idx = 1:numel(scenario_names)
     scenario_cfg.power.measurement_delay_s = scenario_cfg.power.pb_to_noncc_measurement_delay_s;
     scenario_cfg.power.execution_delay_s = scenario_cfg.power.noncc_to_pb_execution_delay_s;
 
+    % 把 scenario_scale 写进 cfg，让下游（cascadeLogic 中的 τ_q 排队项）
+    % 不必从场景结构里反查就能拿到当前场景的流量倍数：
+    %   no_delay → 0；light → 0.5；baseline → 1.0；medium → 1.7；heavy → 2.7。
+    % τ_q 的 arrival rate λ ∝ scenario_scale，使得 no_delay 下 λ=0 → τ_q=0
+    % （与 η_g=1 严格一致），其它场景下随 τ 同步增大。
+    scenario_cfg.power.scenario_scale = scale;
+
     delay_scenarios(idx).name = scenario_names(idx);
     delay_scenarios(idx).cfg = scenario_cfg;
     delay_scenarios(idx).scale = scale;
