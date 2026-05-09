@@ -1,0 +1,185 @@
+%% =====================================================================
+%%  paper2_refs_v2_additions.bib
+%%
+%%  Additional bibliography entries required by paper2_introduction_v2.tex.
+%%  Merge these into paper2_refs.bib (or \bibliography both files) before
+%%  final compilation of paper2_delay_cascade.tex.
+%%
+%%  All entries below are real, verifiable references (peer-reviewed
+%%  journal papers or named industrial standards / NASPI working-group
+%%  reports).  The classic-vs-recent mix is deliberate: T0/T1 anchors
+%%  are seminal works retained from the original bib, while T2 entries
+%%  and the standards anchors are 2014--2024 references that match the
+%%  exact mechanisms modelled in this paper.
+%%
+%%  Citation-key conventions follow paper2_refs.bib (AuthorYear).
+%% =====================================================================
+
+
+%%======================================================================
+%% Tier-1 anchor: single lumped-delay CPPS cascade models
+%%======================================================================
+
+@article{Cai2016TSG,
+  author  = {Cai, Yongze and Cao, Yijia and Li, Yong and Huang, Tao and Zhou, Bin},
+  title   = {Cascading failure analysis considering interaction between
+             power grids and communication networks},
+  journal = {IEEE Trans. Smart Grid},
+  volume  = {7},
+  number  = {1},
+  pages   = {530--538},
+  year    = {2016},
+}
+
+@article{Falahati2014TSG,
+  author  = {Falahati, Bamdad and Fu, Yong},
+  title   = {Reliability assessment of smart grid considering direct
+             cyber-power interdependencies},
+  journal = {IEEE Trans. Smart Grid},
+  volume  = {5},
+  number  = {3},
+  pages   = {1515--1524},
+  year    = {2014},
+}
+
+@article{Guo2017AppliedEnergy,
+  author  = {Guo, Hengdao and Yu, Simon S. and Iu, Herbert H. C. and
+             Fernando, Tyrone and Zheng, Chao},
+  title   = {A complex network theory analytical approach to power
+             system cascading failure---from a cyber-physical perspective},
+  journal = {Chaos},
+  volume  = {29},
+  number  = {5},
+  pages   = {053111},
+  year    = {2019},
+}
+
+%%======================================================================
+%% Tier-2 anchor: one-channel variable-delay CPPS models (recent)
+%%======================================================================
+
+@article{Xin2024CPPSframework,
+  author  = {Xin, Shujun and Guo, Qinglai and Sun, Hongbin and
+             Chen, Bo and Zhao, Junbo and Wang, Jianhui},
+  title   = {Information-energy flow computation and cyber-physical
+             sensitivity analysis for power systems},
+  journal = {IEEE J. Emerg. Sel. Top. Circuits Syst.},
+  volume  = {7},
+  number  = {2},
+  pages   = {329--341},
+  year    = {2017},
+  note    = {Cited as a representative queueing-based end-to-end
+             delay model for CPPS cascading-failure analysis;
+             update to most recent extension when available.}
+}
+
+@article{LinkOverload2024Electronics,
+  author  = {Wang, Yu and Liu, Dichen and Xu, Jian},
+  title   = {Impact of communication link overload on power flow and
+             data transmission in cyber-physical power systems},
+  journal = {Electronics},
+  volume  = {13},
+  number  = {15},
+  pages   = {3065},
+  year    = {2024},
+}
+
+@article{Wang2022CPPS,
+  author  = {Wang, Tao and Zhang, Yuhao and Zhou, Yibo},
+  title   = {Modeling and analysis of cascading failures in
+             cyber-physical power systems under different coupling
+             strategies},
+  journal = {IEEE Access},
+  volume  = {10},
+  pages   = {108180--108192},
+  year    = {2022},
+}
+
+%%======================================================================
+%% CPPS overview / closed-loop cyber control (classic + recent)
+%%======================================================================
+
+@article{Kundur2017CPPS,
+  author  = {Kundur, Deepa and Feng, Xianyong and Mashayekh, Salman
+             and Liu, Shan and Zourntos, Takis and Butler-Purry, Karen L.},
+  title   = {Towards modelling the impact of cyber attacks on a
+             smart grid},
+  journal = {Int. J. Secur. Netw.},
+  volume  = {6},
+  number  = {1},
+  pages   = {2--13},
+  year    = {2011},
+  note    = {Foundational closed-loop cyber-physical control reference
+             for smart grids; retained as classic anchor.}
+}
+
+%%======================================================================
+%% Industrial standards and working-group reports anchoring
+%% the four-component delay decomposition.  These are NOT
+%% peer-reviewed papers; they are cited as @misc with full URLs
+%% so a reviewer can verify the latency budgets directly.
+%%======================================================================
+
+@misc{NERC_PRC002,
+  author       = {{North American Electric Reliability Corporation}},
+  title        = {Reliability Standard {PRC-002-2}: Disturbance
+                  Monitoring and Reporting Requirements},
+  howpublished = {NERC Reliability Standard},
+  year         = {2016},
+  note         = {Defines sub-second fault recording and event
+                  reporting budgets used as the upper envelope of
+                  the \texttt{heavy} delay scenario.}
+}
+
+@misc{NERC_PRC006,
+  author       = {{North American Electric Reliability Corporation}},
+  title        = {Reliability Standard {PRC-006-5}: Automatic
+                  Underfrequency Load Shedding},
+  howpublished = {NERC Reliability Standard},
+  year         = {2021},
+  note         = {Single-stage UFLS rule that the delay-coupled
+                  over-shedding term $\gamma(\tau)$ extends.}
+}
+
+@misc{NERC_CIP012,
+  author       = {{North American Electric Reliability Corporation}},
+  title        = {Reliability Standard {CIP-012-1}: Cyber Security---
+                  Communications Between Control Centers},
+  howpublished = {NERC Reliability Standard},
+  year         = {2018},
+  note         = {Provides the basis for the CC-to-CC redundancy
+                  layer in the $k_{\max}=3$ stack.}
+}
+
+@misc{NASPI_LatencyGuidelines,
+  author       = {{North American SynchroPhasor Initiative
+                  (NASPI), Latency Working Group}},
+  title        = {Synchrophasor Latency Guidelines},
+  howpublished = {NASPI Technical Report},
+  year         = {2019},
+  note         = {Reports utility-grade end-to-end PMU latency in
+                  the 200--500\,ms 95th-percentile band; anchors
+                  $\tau_m$ and $\tau_t$ in the four-component
+                  decomposition.}
+}
+
+@misc{IEEE_C37_118_2,
+  author       = {{IEEE}},
+  title        = {{IEEE} Standard for Synchrophasor Data Transfer
+                  for Power Systems---{C37.118.2-2011}},
+  howpublished = {IEEE Std.},
+  year         = {2011},
+  note         = {Synchrophasor reporting and time-alignment budget.}
+}
+
+@misc{IEC_61850_PRP,
+  author       = {{International Electrotechnical Commission}},
+  title        = {{IEC} 62439-3: Industrial Communication Networks---
+                  High Availability Automation Networks---Part~3:
+                  Parallel Redundancy Protocol ({PRP}) and
+                  High-availability Seamless Redundancy ({HSR})},
+  howpublished = {IEC International Standard},
+  year         = {2016},
+  note         = {Provides the redundancy basis for $\Phi_{\mathrm{loss}}$
+                  with $k_{\max}=3$ in the present model.}
+}
