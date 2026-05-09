@@ -489,6 +489,58 @@ parfor idxAlpha = 1:numA
             ufls_in_service_mask = (gen_status_vec > 0);
             ufls_total_ref_gen = sum(mpc_sur.gen(ufls_in_service_mask, 2));
 
+            % --- 级联耦合 CC 排队拥塞 τ_q(r)（M/M/1 mean-wait, per-round 标量） ---
+            % 物理依据见 createDelayConfig.m 的 tau_queue 注释块。
+            % 关键性质：N_cc(r) 越小 (cyber 级联越深) → ρ 越大 → τ_q 超线性发散，
+            %           使时延危害峰值移到 Round 2-4 而非 Round 1。
+            tau_q_round = 0;
+            tau_queue_log = struct('enable', false, 'tau_q', 0, ...
+                'n_cc_surviving', numel(surviving_cc), ...
+                'n_gen_inservice', sum(ufls_in_service_mask), ...
+                'rho_cc', 0, 'mu_cc_eff', NaN);
+            if isfield(delay_cfg.power, 'tau_queue') && ...
+                    isfield(delay_cfg.power.tau_queue, 'enable') && ...
+                    delay_cfg.power.tau_queue.enable
+                tq_cfg = delay_cfg.power.tau_queue;
+                n_cc_r  = numel(surviving_cc);
+                n_gen_r = sum(ufls_in_service_mask);
+                % scenario_scale: 由 createDelayScenarioConfigs 写入 cfg；
+                % 仅当用户启用了 tau_queue 但用的是不带该字段的 legacy cfg 时，
+                % 退化到 1.0 = baseline 流量（保守中性默认，不会让 τ_q=0 也不会让 τ_q
+                % 超过 baseline 应有量级）。
+                if isfield(delay_cfg.power, 'scenario_scale')
+                    s_scn = delay_cfg.power.scenario_scale;
+                else
+                    s_scn = 1;  % baseline-equivalent fallback
+                end
+                % α 通道：高储备 → 投资 PDC 集群 → μ_cc_eff 抬升。
+                if isfield(tq_cfg, 'mu_cc_alpha_gain')
+                    mu_alpha_gain = tq_cfg.mu_cc_alpha_gain;
+                else
+                    mu_alpha_gain = 0;
+                end
+                mu_cc_eff = tq_cfg.mu_cc * (1 + mu_alpha_gain * alpha);
+                if n_cc_r >= 1 && n_gen_r >= 1 && mu_cc_eff > 0 && s_scn > 0
+                    lambda_per_cc = (n_gen_r * tq_cfg.lambda_per_gen * s_scn) / n_cc_r;
+                    rho_cc        = lambda_per_cc / mu_cc_eff;
+                    rho_eff       = min(rho_cc, tq_cfg.rho_max);
+                    % 1-rho_eff ≥ 1-rho_max（rho_max≈0.95 → ≥0.05），无须 eps 兜底；
+                    % 这里直接除即可，闭式 τ_q ∈ [0, (1/μ)·ρ_max/(1-ρ_max)]。
+                    tau_q_round   = (1 / mu_cc_eff) * rho_eff / (1 - rho_eff);
+                else
+                    % 无 CC / 无机组 / 无流量：M/M/1 退化，τ_q=0；下游路径不可达
+                    % 时 eta_g 已经被 best_dist_g==inf 分支判 0，不重复计费。
+                    rho_cc = 0;
+                end
+                tau_queue_log.enable          = true;
+                tau_queue_log.tau_q           = tau_q_round;
+                tau_queue_log.n_cc_surviving  = n_cc_r;
+                tau_queue_log.n_gen_inservice = n_gen_r;
+                tau_queue_log.rho_cc          = rho_cc;
+                tau_queue_log.mu_cc_eff       = mu_cc_eff;
+            end
+            delay_injection_log.tau_queue = tau_queue_log;
+
             for gIdx = 1:size(mpc_sur.gen, 1)
                 if gen_status_vec(gIdx) <= 0
                     continue;  % 已离线的发电机跳过
@@ -542,6 +594,13 @@ parfor idxAlpha = 1:numA
 
                     tau_m_g = delay_cfg.power.pb_to_noncc_measurement_delay_s + cyber_up_d;
                     tau_e_g = delay_cfg.power.noncc_to_pb_execution_delay_s + cyber_down_d;
+
+                    % 叠加级联耦合 CC 排队延迟 τ_q(r)（per-round 标量，对所有机组同值；
+                    % 上行/下行均经过 surviving CC，故对称叠加到 τ_m 和 τ_e）。
+                    % τ_q_round 在循环外按 M/M/1 公式一次算出；当 tau_queue.enable=false
+                    % 时其值固定为 0，本行回退到原行为。
+                    tau_m_g = tau_m_g + tau_q_round;
+                    tau_e_g = tau_e_g + tau_q_round;
 
                     % --- 计算 η ：根据 delay_cfg.power.eta_model 分派 ---
                     % 'etaplus' 路径需要总跳数与机组参考出力（方案 A 归一化）
