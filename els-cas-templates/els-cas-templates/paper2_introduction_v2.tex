@@ -1,0 +1,257 @@
+%% =====================================================================
+%%  paper2_introduction_v2.tex
+%%
+%%  Revised Introduction (Section 1) for
+%%    "Delay-Integrated Cascading Failure Analysis in Cyber-Physical
+%%     Power Systems: A Closed-Loop Feedback Perspective"
+%%
+%%  Drop-in replacement for the \section{Introduction} block currently
+%%  located at lines 120--218 of paper2_delay_cascade.tex.  Compiles
+%%  against the Elsevier cas-dc class already used by paper2.
+%%
+%%  Design rationale (so future revisions stay consistent):
+%%    * Frames the contribution against THREE concrete tiers of prior
+%%      work, not a vague "most papers ignore delay" statement, so a
+%%      reviewer cannot dismiss the gap as already closed.
+%%    * Every tier names representative classic + recent (2022--2024)
+%%      references, addressing the user's request to include both
+%%      seminal and up-to-date sources.
+%%    * Each contribution bullet is anchored to a specific industrial
+%%      standard (NERC PRC-002-2, NASPI P95, IEC 61850 PRP,
+%%      IEEE C37.118.2, NERC CIP-012, NERC PRC-006-5) so the model
+%%      parameters are externally defensible, not arbitrary.
+%%    * Preserves the closed-loop feedback narrative, the
+%%      \(R_{1}\)/\(R_{3}\) metric pair, and the \eta^{+} mechanism
+%%      decomposition that the rest of the paper relies on.
+%%
+%%  New \citep keys introduced here are defined in
+%%    paper2_refs_v2_additions.bib
+%%  and should be \input or \bibinput-merged into paper2_refs.bib
+%%  before final compilation.
+%% =====================================================================
+
+\section{Introduction}\label{sec:intro}
+
+The deep integration of physical infrastructure with high-speed
+communication networks has transformed traditional power grids into
+\emph{cyber-physical power systems} (CPPS), in which a physical power
+layer and a cyber communication layer operate as a tightly coupled whole
+\citep{Rinaldi2001,Ouyang2014,Kundur2017CPPS}.  Under nominal conditions
+this coupling improves dispatch flexibility, situational awareness and
+wide-area control performance.  Under stress, however, it opens a
+bidirectional failure channel: a disturbance originating in either layer
+can propagate to the other and trigger cascading failures of a magnitude
+neither layer would experience in isolation
+\citep{Buldyrev2010,Gao2012,Guo2017AppliedEnergy}.
+
+\subsection*{From a binary cyber layer to a delay-quality cyber layer}
+
+A rich body of work has investigated cascading failures through
+topological models, flow-redistribution rules and attack-vulnerability
+analyses
+\citep{Motter2002,Dobson2007,Brummitt2012,Schneider2011}.
+These studies established \emph{how} structural interdependence amplifies
+failure propagation, but they treat the communication layer as a binary
+entity---a link is either functional or failed---without modelling the
+\emph{quality of service} that surviving links provide.  In particular,
+end-to-end latency, defined as the time elapsed between issuing a
+measurement or a control command and its arrival at the destination, is
+either absent from the cascade dynamics or appears only as a post-hoc
+observation (``delay increased after the failures'') rather than as a
+causal variable that degrades generator control \emph{during} the
+cascade itself \citep{Milano2012}.
+
+This omission is substantive, not cosmetic.  Industrial reliability
+standards explicitly bound end-to-end latency for protection-grade
+control: NERC PRC-002-2 requires fault recording and event reporting
+within sub-second windows \citep{NERC_PRC002}, NASPI synchrophasor
+deployment guidelines report a 95th-percentile end-to-end latency in the
+$200$--$500\,\textrm{ms}$ band for utility WAMS
+\citep{NASPI_LatencyGuidelines}, and IEEE~C37.118.2 fixes the report
+formatting and time-alignment budget for PMU streams
+\citep{IEEE_C37_118_2}.  Once any one of these budgets is consumed by
+queueing in a stressed cyber topology, the supervisory control loop
+operates on stale state and lagged actuation, and the closed-loop
+controllability of generation declines well before any second physical
+asset has tripped.
+
+\subsection*{Three tiers of prior work, and a missing fourth}
+
+To position the present paper precisely, we group existing CPPS
+cascading-failure studies that touch on communication latency into three
+tiers, summarised in Table~\ref{tab:prior_tiers}, and identify the tier
+that has remained empty.
+
+\begin{table*}[!t]
+\centering
+\caption{Three tiers of prior CPPS cascading-failure studies w.r.t.\ the
+treatment of communication delay, and the gap addressed by this work.}
+\label{tab:prior_tiers}
+\small
+\begin{tabular}{@{}p{0.16\linewidth}p{0.36\linewidth}p{0.40\linewidth}@{}}
+\toprule
+\textbf{Tier} & \textbf{How delay is modelled} & \textbf{Representative work} \\
+\midrule
+\textbf{T0 — Instantaneous cyber} &
+Cascade is driven by topology and DC/AC overload only;
+``commands propagate without delay'' is an explicit or implicit
+assumption. &
+\citet{Motter2002,Dobson2007,Brummitt2012,Buldyrev2010,Gao2012} \\[2pt]
+\textbf{T1 — Single lumped delay~$\tau$} &
+The whole cyber chain is collapsed into a constant scalar delay or a
+constant message-loss probability, applied uniformly to every
+control action. &
+\citet{Cai2016TSG,Falahati2014TSG,Guo2017AppliedEnergy,Huang2015} \\[2pt]
+\textbf{T2 — One-channel variable delay} &
+Delay is allowed to vary, but only along a \emph{single} axis: queueing
+on transmission links, link overload, or PMU jitter for state
+estimation. The other channels of the cyber stack remain idealised. &
+\citet{Xin2024CPPSframework,LinkOverload2024Electronics,Wang2022CPPS,LaiCPPS2019} \\[2pt]
+\textbf{T3 — \emph{This work}: full-stack, standard-anchored,
+closed-loop} &
+End-to-end delay is decomposed into measurement, edge processing,
+transmission, and actuation/UFLS components; each component is bounded
+by a named industrial standard; the resulting heterogeneous $\boldsymbol{\tau}$
+is fed through a triple-mechanism efficacy function
+$\eta^{+}=\Phi_{\mathrm{loss}}\!\cdot\!\Phi_{\mathrm{sat}}\!\cdot\!
+\Phi_{\mathrm{crit}}$ inside every cascade round, closing the
+delay~$\to$~control~$\to$~overload~$\to$~topology~$\to$~delay loop. &
+--- (this paper) \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Tier~T0 omits the cyber service quality entirely; tier~T1 makes
+the delay penalty independent of \emph{where} in the cyber stack the
+bottleneck actually sits, so every mitigation looks equally effective;
+tier~T2 captures one channel realistically but misses the interaction
+between channels.  None of the three tiers offers a model in which
+(i)~latency originates from the same physical mechanisms a NASPI
+audit would record, (ii)~the latency feeds back into the
+\emph{next} round of the cascade rather than being applied as a
+post-hoc rescaling, and (iii)~the resulting damage is observable on
+both an aggregate load metric and a generator-fidelity metric.  Closing
+this gap is the objective of the present paper.
+
+\subsection*{The closed-loop mechanism we embed}
+
+In a closed-loop control architecture, stale measurements cause the
+control center to act on outdated states while lagged execution causes
+corrective actions to arrive after the system has drifted further.  Both
+effects reduce the effective generation output relative to its scheduled
+reference.  When this reduction is embedded \emph{before} the power-flow
+redistribution that determines which branches overload, a
+self-reinforcing feedback loop emerges:
+\begin{quote}
+\emph{Delay reduces effective generation
+$\;\to\;$ altered power flows cause additional overloads
+$\;\to\;$ overloaded branches trip
+$\;\to\;$ structural failures degrade the cyber topology
+$\;\to\;$ the degraded topology lengthens paths and amplifies delay
+$\;\to\;$ further generation reduction in the next round
+$\;\to\;\cdots$.}
+\end{quote}
+This loop converts communication latency from a passive symptom of
+distress into an active driver of further damage.  It is by
+construction invisible to T0/T1 models, and only partially visible to
+T2 models, because in those models all delay scenarios share a
+common structural cascade and delay merely rescales final performance
+metrics \citep{LaiCPPS2019}.  Our prior work
+\citep{ChenTu2026} established the underlying CPPS framework with
+distributed control centers, a Functional
+Viability-Constrained Island Detection (FVC-ID) mechanism and a
+Cohesion-Propagation Importance Metric (CPIM) for control-center
+placement, but did not model the influence of communication delay on
+generator control during the cascade.  The present paper fills that
+gap.
+
+\subsection*{Contributions}
+
+The contributions of this work are as follows.
+
+\begin{enumerate}
+\item \textbf{A delay-integrated cascading failure framework with
+  closed-loop feedback.}  Delay computation is embedded inside every
+  cascade round and scales generator output \emph{before} the
+  DC power-flow redistribution.  Each delay scenario therefore
+  produces a genuinely different cascade trajectory---different
+  overload patterns, different failure sequences, different terminal
+  states---rather than a rescaled copy of a common trajectory, in
+  contrast to T0--T2 models above.
+
+\item \textbf{A standard-anchored, role-aware, four-component delay
+  decomposition.}  End-to-end latency is decomposed into measurement
+  ($\tau_m$), edge processing ($\tau_e$), transmission ($\tau_t$) and
+  actuation/UFLS ($\tau_a$) components, each parameterised against a
+  named industrial reference: NASPI synchrophasor latency
+  guidelines~\citep{NASPI_LatencyGuidelines} and
+  IEEE~C37.118.2~\citep{IEEE_C37_118_2} for $\tau_m$ and~$\tau_t$,
+  IEC~61850 PRP/HSR redundancy~\citep{IEC_61850_PRP} for the
+  $k_{\max}=3$ redundancy stack used inside~$\Phi_{\mathrm{loss}}$,
+  NERC~CIP-012~\citep{NERC_CIP012} for control-center traffic
+  protection, and NERC PRC-002-2~\citep{NERC_PRC002} for the upper
+  envelope used to define the \texttt{heavy} scenario
+  ($\tau_{\mathrm{tot}}\!\approx\!594\,\mathrm{ms}\!\approx\!0.6\times$
+  PRC-002-2 budget).  Uplink (measurement) and downlink (command)
+  paths are computed separately, with role-dependent service times
+  for control centers versus relay nodes, capturing the asymmetric
+  processing behaviour inherent in SCADA/EMS architectures.
+
+\item \textbf{A three-mechanism control-efficacy model
+  $\eta^{+}=\Phi_{\mathrm{loss}}\!\cdot\!\Phi_{\mathrm{sat}}\!\cdot\!
+  \Phi_{\mathrm{crit}}$.}  Delay-induced robustness loss is
+  decomposed into (i)~redundancy-attenuated message loss
+  ($\Phi_{\mathrm{loss}}$, with $k_{\max}$-fold IEC~61850~PRP backup),
+  (ii)~controller saturation under elevated $\tau_m+\tau_e$
+  ($\Phi_{\mathrm{sat}}$), and (iii)~normalised critical collapse
+  near the per-machine $\tau_{\mathrm{crit},i}$
+  ($\Phi_{\mathrm{crit}}$, normalised so that
+  $\eta^{+}(\tau\!=\!0)\!=\!1$ exactly).  The three mechanisms are
+  orthogonal in parameter space, allowing a reviewer to attribute any
+  observed delay penalty to a specific physical channel.
+
+\item \textbf{Coupled UFLS over-shedding under delay.}  In contrast
+  to the standard NERC~PRC-006-5 single-stage UFLS rule
+  \citep{NERC_PRC006}, we model that elevated $\tau_m+\tau_e$
+  forces the load-shedding scheme to over-shed by a delay-dependent
+  factor $\gamma(\tau)$ before stabilisation, capped at a
+  configurable $\overline{\phi}_{\max}$.  This is, to our knowledge,
+  the first cascading-failure model in which UFLS depth is an
+  endogenous function of cyber-layer latency rather than a fixed
+  rule.
+
+\item \textbf{Twin resilience metrics that reveal hidden degradation.}
+  The cascade is evaluated jointly on $R_1$, a supply-conservation
+  ratio, and $R_3$, a capacity-weighted dispatch-fidelity NRMSE.  We
+  show that delay damage is asymmetrically concentrated at
+  moderate-to-high tolerance margins---precisely where a delay-free
+  analysis predicts safety---and that $R_3$ exposes hidden functional
+  degradation that aggregate load-retention metrics miss.  A
+  delay-penalty heatmap on the (tolerance, cascade-round) plane
+  identifies a narrow critical intervention window in the early
+  rounds.
+\end{enumerate}
+
+\noindent
+The combined effect is that delay-free and single-$\tau$ robustness
+models are not merely imprecise; they are systematically
+\emph{misleading}, providing the strongest reassurance in the operating
+regimes that harbour the greatest latent vulnerability.
+
+\subsection*{Paper organisation}
+
+The remainder of this paper is organised as follows.
+Section~\ref{sec:model} presents the CPPS model, including the
+four-component communication delay formulation and the
+betweenness-assortative interdependent coupling.
+Section~\ref{sec:cascade} describes the delay-integrated cascading
+failure dynamics, the $\eta^{+}$ control-efficacy function, the
+delay-coupled UFLS rule, and the five-level delay severity scenarios.
+Section~\ref{sec:experiment} reports Monte~Carlo experiments on the
+IEEE~39-bus test system coupled to a Barab\'asi--Albert scale-free
+communication network, covering 1\,000 coupling realisations, eleven
+tolerance levels and five delay scenarios, and reports the asymmetric
+delay-penalty regime, the heavy-tailed collapse distributions, the
+hidden $R_3$ degradation, the round-level intervention window, and a
+sensitivity analysis of mitigation actions.
+Section~\ref{sec:conclusion} concludes the paper.
