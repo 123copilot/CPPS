@@ -98,10 +98,23 @@ parfor idxAlpha = 1:numA
 
         round_logs = {};
 
-        % 设置可复现的随机种子，确保同一(alpha, trial)对
-        % 在不同延迟场景下产生相同的随机故障传播路径，
-        % 使得场景间的R1差异完全归因于延迟配置的不同
-        rng(idxAlpha * 100000 + trial, 'twister');
+        % 设置可复现的随机种子。
+        %
+        % 关键设计 (Common Random Numbers, CRN)：种子仅取决于 trial，
+        % **不**含 idxAlpha 与 idxScenario，使得：
+        %   (1) 同一 trial 在 不同 alpha × 不同 delay scenario 下都使用
+        %       相同的随机故障传播序列；
+        %   (2) 跨场景 / 跨 α 的 R1 差异完全归因于
+        %         (i) 延迟配置 (delay_cfg) 与
+        %         (ii) 容量裕度 alpha 经由 (1+α)·P_branch / (1+α)·bet
+        %       这两条物理通道，而非 MC 抽样噪声。
+        %
+        % 旧版 `idxAlpha * 100000 + trial` 让相邻 α 使用完全独立的两组
+        % 400-trial 抽样，导致 R1(α) 折线在统计噪声 (~±0.02 @ 400 trials)
+        % 之内出现非物理的 α=0→0.1 抖动。改为单 trial 种子后，方差大幅
+        % 收紧，no_delay 折线随 α 的微小起伏即被压到 95% CI 之内。
+        % MATLAB 'twister' 状态空间 ~2^19937，trial∈[1,400] 不会冲突。
+        rng(trial, 'twister');
 
         % P1: 预生成随机数池，消除不同时延场景下的蝴蝶效应
         % 对每个 (节点ID, 内循环轮次, 主循环轮次) 分配固定随机数，

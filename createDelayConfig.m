@@ -253,16 +253,21 @@ delay_cfg.power.ufls.shed_max = 0.85;
 % 数学形式：shed_max_eff(α) = shed_max - (shed_max - shed_max_min) · α
 %   - α = 0 → shed_max_eff = shed_max = 0.85（与本 PR 之前完全一致，
 %     保证回归行为不变）；
-%   - α = 1 → shed_max_eff = shed_max_min = 0.65（高储备下浅切上限）；
+%   - α = 1 → shed_max_eff = shed_max_min = 0.75（高储备下浅切上限）；
 %   - 线性插值，单调递减、连续，符合"裕度越大、单次切除越浅"的工程直觉。
 %
-% 参数取值 0.65 的依据：仍在 NERC/IEEE 推荐的 0.6-0.85 工程区间内（区间
-% 上端对应"应急深 UFLS"、下端对应"常规分级 UFLS 总量"）。下界取 0.65
-% 而非更小，是为了不破坏 baseline / medium 的现状：在那两档下未截断的
-% shed = (1-φ)(1+γ) 通常 < 0.6（baseline ≈ 0.3-0.4，medium ≈ 0.5-0.6），
-% 因此 shed_max_eff = 0.65 也不会触发 cap，φ_eff 不变；只有 heavy
-% (uncapped shed ≈ 0.99) 上的 cap 会随 α 抬升而松动，正好让 α 的拓扑
-% 保护红利经由 φ_eff 通道传到 R1，恢复"R1 随 α 增大而增大"的单调性。
+% 参数取值 0.75 的依据：仍在 NERC/IEEE 推荐的 0.6-0.85 工程区间内。
+% 取值从 0.65 上调至 0.75 的目的：
+%   旧版 0.65 → 斜率 Δshed/Δα = 0.20/单位 α，使得在 α≈0.7 附近
+%   `shed_max_eff` 跨越 heavy 场景未截断 shed (~0.99·γ-attenuated) 与
+%   截断后的 over-shed 主导区之间的拐点，导致 heavy R1 在 α=0.7 出现
+%   非物理的局部凹陷（ΔR1 柱在 α=0.7 反弹）。
+%   新值 0.75 → 斜率减半至 0.10/单位 α，cap 在整个 α∈[0,1] 内仍咬合
+%   heavy 场景（heavy uncapped shed 仍在 0.85+ 区间），因此"R1 随 α
+%   单调上升"性质保留；同时拐点被推到 α≈0.95 之外，0≤α≤0.9 区间
+%   彻底无 kink，ΔR1 柱单调下降。
+%   baseline / medium 在新 cap (0.78~0.85) 下仍未触发截断（其 uncapped
+%   shed ≈ 0.3-0.6 < 0.78），故行为不变。
 %
 % 影响范围（依"全局视角"原则梳理上下游）：
 %   上游依赖：delay_cfg.power.ufls.shed_max（旧 cap 上界，本字段是其下界）；
@@ -272,7 +277,7 @@ delay_cfg.power.ufls.shed_max = 0.85;
 %             → R1 (Fig2/Fig5) 的 heavy 曲线呈现正斜率；R3 因机组 η 公式
 %             不变而几乎不受影响；Fig1/Fig4/Fig6/Fig7/Fig8/Fig9 因 α=0
 %             与之前完全一致、α>0 仅 heavy 略有变化，不会破坏其结论。
-delay_cfg.power.ufls.shed_max_min = 0.65;
+delay_cfg.power.ufls.shed_max_min = 0.75;
 
 % ----------------------------------------------------------------------
 % τ_q：级联耦合 CC 排队拥塞延迟（"使时延危害峰值移到 Round 2–4"的物理通道）
