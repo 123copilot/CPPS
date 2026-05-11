@@ -926,6 +926,7 @@ end
 fprintf('\n========== 全部动作场景完成 ==========\n');
 
 % --- 为动作场景计算逐轮R1时间序列（与基线场景LVCF对齐逻辑一致） ---
+if global_max_rounds > 0
 mean_ts_R1_action = NaN(global_max_rounds, numA, num_actions);
 
 for ai = 1:num_actions
@@ -934,7 +935,9 @@ for ai = 1:num_actions
         for trial = 1:num_samples
             round_logs_a = round_log_action_all{idxAlpha, trial, ai};
             if isempty(round_logs_a), continue; end
-            n_rounds_a = numel(round_logs_a);
+            % 限制到 global_max_rounds，确保 padded_R1_a 不会被自动扩展，
+            % 从而保证与基线 mean_ts_R1 行对齐（C1-C4 对比实验依赖此对齐）。
+            n_rounds_a = min(numel(round_logs_a), global_max_rounds);
             for rIdx = 1:n_rounds_a
                 rl_a = round_logs_a{rIdx};
                 % 计算该轮的delay-adjusted R1（与主实验逻辑完全一致）
@@ -978,6 +981,10 @@ for ai = 1:num_actions
 end
 
 fprintf('动作场景逐轮R1时间序列计算完成。\n');
+else
+    mean_ts_R1_action = NaN(0, numA, num_actions);
+    fprintf('global_max_rounds=0，跳过动作场景逐轮R1时间序列计算。\n');
+end
 
 % --- 箱体截尾均值（动作场景，保留以备回归对比，绘图不再使用） ---
 trimmed_mean_R1_action = NaN(numA, num_actions);
