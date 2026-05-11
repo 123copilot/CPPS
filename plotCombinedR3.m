@@ -90,7 +90,7 @@ for s = 1:numel(hb)
 end
 yline(ax, 0, '--', 'Color', [0 0 0 0.45], 'LineWidth', 0.6, ...
     'HandleVisibility', 'off');
-ylabel(ax, '\DeltaR_3 = R_3^{scenario} - R_3^{no\_delay}   (bars)', ...
+ylabel(ax, '\DeltaDTE = R_3^{scenario} - R_3^{no\_delay}   (bars)', ...
     'FontSize', 10);
 ax.YAxis(2).Color = [0.25 0.25 0.25];
 
@@ -115,7 +115,7 @@ for s = 1:numS
         'Color', colors(s, :), 'MarkerFaceColor', colors(s, :), ...
         'MarkerSize', 5);
 end
-ylabel(ax, 'R_3 (cascade deviation)   (lines)', 'FontSize', 10);
+ylabel(ax, 'Dispatch Tracking Error R_3 (DTE; smaller is better)   (lines)', 'FontSize', 10);
 if ~isempty(opt.YLim)
     ylim(ax, opt.YLim);
 end
@@ -126,14 +126,14 @@ xlabel(ax, '\alpha', 'FontSize', 10);
 xlim(ax, [min(xv) - 0.04, max(xv) + 0.04]);
 set(ax, 'FontSize', 9, 'Box', 'on');
 grid(ax, 'on');
-title(ax, sprintf(['R_3 sensitivity to \\alpha across delay regimes ' ...
-    '(numA=%d, numS=%d)  —  smaller R_3 is better; ' ...
-    'lines: R_3 (left axis); bars: \\DeltaR_3 (right axis)'], ...
+title(ax, sprintf(['Dispatch Tracking Error R_3 (DTE) sensitivity to \\alpha across delay regimes ' ...
+    '(numA=%d, numS=%d)  —  smaller DTE is better; ' ...
+    'lines: DTE (left axis); bars: \\DeltaDTE (right axis)'], ...
     numA, numS), 'FontSize', 10, 'FontWeight', 'normal');
 
 % --- Combined legend (lines + bars) -------------------------------------
-line_legend_lbls = strcat(disp_labels, ' (R_3)');
-bar_legend_lbls  = strcat(delay_disp_lbls, ' (\DeltaR_3)');
+line_legend_lbls = strcat(disp_labels, ' (DTE)');
+bar_legend_lbls  = strcat(delay_disp_lbls, ' (\DeltaDTE)');
 all_handles      = [hl(:); hb(:)];
 all_labels       = [line_legend_lbls(:); bar_legend_lbls(:)];
 lgd = legend(ax, all_handles, all_labels, 'Location', 'eastoutside', ...
