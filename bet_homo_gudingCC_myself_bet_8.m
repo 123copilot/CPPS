@@ -937,6 +937,9 @@ for ai = 1:num_actions
             if isempty(round_logs_a), continue; end
             % 限制到 global_max_rounds，确保 padded_R1_a 不会被自动扩展，
             % 从而保证与基线 mean_ts_R1 行对齐（C1-C4 对比实验依赖此对齐）。
+            % 注意：当动作场景产生的轮次超过 global_max_rounds 时，超出部分
+            % 会被有意截断；下游 C1-C4 / 热力图分析也只在 plot_max_round
+            % 范围内取值，因此截断不会影响结论。
             n_rounds_a = min(numel(round_logs_a), global_max_rounds);
             for rIdx = 1:n_rounds_a
                 rl_a = round_logs_a{rIdx};
