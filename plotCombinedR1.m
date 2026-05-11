@@ -83,7 +83,7 @@ for s = 1:numel(hb)
 end
 yline(ax, 0, '--', 'Color', [0 0 0 0.45], 'LineWidth', 0.6, ...
     'HandleVisibility', 'off');
-ylabel(ax, '\DeltaR_1 = R_1^{no\_delay} - R_1^{scenario}   (bars)', ...
+ylabel(ax, '\DeltaLSR = R_1^{no\_delay} - R_1^{scenario}   (bars)', ...
     'FontSize', 10);
 ax.YAxis(2).Color = [0.25 0.25 0.25];
 
@@ -111,7 +111,7 @@ end
 yline(ax, 1, ':', 'Color', [0 0 0 0.3], 'LineWidth', 0.5, ...
     'HandleVisibility', 'off');
 ylim(ax, [0 1.05]);
-ylabel(ax, 'R_1 (delay-adjusted)   (lines)', 'FontSize', 10);
+ylabel(ax, 'Load Service Ratio R_1 (LSR, delay-adjusted)   (lines)', 'FontSize', 10);
 ax.YAxis(1).Color = [0.10 0.10 0.10];
 
 % --- Common x-axis & cosmetics ------------------------------------------
@@ -119,13 +119,13 @@ xlabel(ax, '\alpha', 'FontSize', 10);
 xlim(ax, [min(xv) - 0.04, max(xv) + 0.04]);
 set(ax, 'FontSize', 9, 'Box', 'on');
 grid(ax, 'on');
-title(ax, sprintf(['R_1 sensitivity to \\alpha across delay regimes ' ...
-    '(numA=%d, numS=%d)  —  lines: R_1 (left axis); bars: \\DeltaR_1 (right axis)'], ...
+title(ax, sprintf(['Load Service Ratio R_1 (LSR) sensitivity to \\alpha across delay regimes ' ...
+    '(numA=%d, numS=%d)  —  lines: LSR (left axis); bars: \\DeltaLSR (right axis)'], ...
     numA, numS), 'FontSize', 10, 'FontWeight', 'normal');
 
 % --- Combined legend (lines + bars) -------------------------------------
-line_legend_lbls = strcat(disp_labels, ' (R_1)');
-bar_legend_lbls  = strcat(delay_disp_lbls, ' (\DeltaR_1)');
+line_legend_lbls = strcat(disp_labels, ' (LSR)');
+bar_legend_lbls  = strcat(delay_disp_lbls, ' (\DeltaLSR)');
 all_handles      = [hl(:); hb(:)];
 all_labels       = [line_legend_lbls(:); bar_legend_lbls(:)];
 lgd = legend(ax, all_handles, all_labels, 'Location', 'eastoutside', ...

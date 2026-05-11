@@ -561,8 +561,8 @@ for s = 1:numel(hb)
 end
 yline(0, 'k--', 'LineWidth', 1);
 xlabel('\alpha');
-ylabel('\DeltaR_1 = mean(R_1^{no\_delay}) - mean(R_1^{scenario})');
-title(sprintf('\\DeltaR_1 vs \\alpha by Delay Scenario (samples per cell: %d)', num_samples));
+ylabel('\DeltaLSR = mean(R_1^{no\_delay}) - mean(R_1^{scenario})   (load-service drop)');
+title(sprintf('\\DeltaLSR (\\DeltaR_1, Load Service Ratio drop) vs \\alpha by Delay Scenario (samples per cell: %d)', num_samples));
 legend(hb, delay_legend_labels_disp, 'Location', 'best');
 % 在负值柱子顶部标注，便于一眼定位代码异常位置
 for s = 1:numel(hb)
@@ -627,8 +627,8 @@ figure('Name', 'Fig2_R1_vs_alpha');
 hold on; grid on;
 ylim([0 1.05]);
 xlabel('\alpha');
-ylabel('R_1 (delay-adjusted)');
-title(sprintf('R_1 vs. \\alpha (delay-adjusted mean, attack: %s, samples: %d, p=%.2f)', ...
+ylabel('Load Service Ratio R_1 (LSR, delay-adjusted)');
+title(sprintf('Load Service Ratio R_1 (LSR) vs. \\alpha (delay-adjusted mean, attack: %s, samples: %d, p=%.2f)', ...
     attackMode, num_samples, propagation_probability));
 for idxScenario = 1:num_delay_scenarios
     plot(alpha_range, mean_R1(:, idxScenario), '-o', 'LineWidth', 1.5, ...
@@ -654,8 +654,8 @@ end
 figure('Name', 'Fig3_R3_vs_alpha');
 hold on; grid on;
 xlabel('\alpha');
-ylabel('R_3');
-title(sprintf('R_3 vs. \\alpha (attack: %s, samples: %d, p=%.2f)', ...
+ylabel('Dispatch Tracking Error R_3 (DTE; smaller is better)');
+title(sprintf('Dispatch Tracking Error R_3 (DTE) vs. \\alpha (attack: %s, samples: %d, p=%.2f)', ...
     attackMode, num_samples, propagation_probability));
 for idxScenario = 1:num_delay_scenarios
     plot(alpha_range, mean_R3(:, idxScenario), '-o', 'LineWidth', 1.5, ...
@@ -789,10 +789,10 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
     imagesc(1:plot_max_round, alpha_range, delta_delay_heatmap');
     set(gca, 'YDir', 'normal');
     cb = colorbar;
-    cb.Label.String = '\DeltaR_1^{delay}';
+    cb.Label.String = '\DeltaLSR^{delay}  (\DeltaR_1, load-service drop)';
     xlabel('Cascade Round');
     ylabel('\alpha');
-    title('Delay Penalty Heatmap (\DeltaR_1 = R_1^{no\_delay} - R_1^{heavy})');
+    title('Delay Penalty Heatmap — \DeltaLSR (\DeltaR_1 = R_1^{no\_delay} - R_1^{heavy})');
     colormap(hot);
 
     % --- 图4b: R3 延迟惩罚热力图 (alpha x round) ---
@@ -816,10 +816,10 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
     imagesc(1:plot_max_round, alpha_range, delta_delay_heatmap_R3');
     set(gca, 'YDir', 'normal');
     cb = colorbar;
-    cb.Label.String = '\DeltaR_3^{delay}';
+    cb.Label.String = '\DeltaDTE^{delay}  (\DeltaR_3, tracking-error rise)';
     xlabel('Cascade Round');
     ylabel('\alpha');
-    title('Delay Penalty Heatmap (per-round \DeltaR_3 = R_3^{heavy} - R_3^{no\_delay})');
+    title('Delay Penalty Heatmap — per-round \DeltaDTE (\DeltaR_3 = R_3^{heavy} - R_3^{no\_delay})');
     colormap(hot);
 end
 
@@ -1087,8 +1087,8 @@ figure('Name', 'Fig5_Sensitivity_R1_vs_alpha', 'Position', [100, 100, 1200, 600]
 hold on; grid on;
 ylim([0 1.05]);
 xlabel('\alpha', 'FontSize', 12);
-ylabel('R_1 (delay-adjusted, mean)', 'FontSize', 12);
-title(sprintf('Sensitivity Analysis: R_1 vs. \\alpha (delay-adjusted mean, samples: %d)', num_samples), 'FontSize', 14);
+ylabel('Load Service Ratio R_1 (LSR, delay-adjusted, mean)', 'FontSize', 12);
+title(sprintf('Sensitivity Analysis: Load Service Ratio R_1 (LSR) vs. \\alpha (delay-adjusted mean, samples: %d)', num_samples), 'FontSize', 14);
 
 for si = 1:num_compare_scenarios
     plot(alpha_range, all_compare_means(:, si), sensitivity_styles{si}, ...
@@ -1104,7 +1104,7 @@ imagesc(alpha_range, 1:num_actions, action_recovery_pct');
 set(gca, 'YDir', 'normal');
 colormap(hot);
 cb_sens = colorbar;
-ylabel(cb_sens, 'Recovery %', 'FontSize', 11);
+ylabel(cb_sens, 'LSR Recovery %', 'FontSize', 11);
 xlabel('\alpha', 'FontSize', 12);
 ylabel('Action', 'FontSize', 12);
 action_name_list = strings(num_actions, 1);
@@ -1112,7 +1112,7 @@ for ai = 1:num_actions
     action_name_list(ai) = action_scenarios(ai).name;
 end
 set(gca, 'YTick', 1:num_actions, 'YTickLabel', cellstr(action_name_list));
-title('Recovery %: (Action R_1 - Heavy R_1) / (NoDelay R_1 - Heavy R_1)', 'FontSize', 13);
+title('LSR Recovery %: (Action R_1 - Heavy R_1) / (NoDelay R_1 - Heavy R_1)', 'FontSize', 13);
 
 % --- 图7: 动作排名柱状图 ---
 figure('Name', 'Fig7_Action_Ranking', 'Position', [100, 100, 800, 500]);
@@ -1127,8 +1127,8 @@ for ai = 1:num_actions
     sorted_name_list(ai) = action_scenarios(sort_order(ai)).name;
 end
 set(gca, 'XTickLabel', cellstr(sorted_name_list), 'FontSize', 11);
-ylabel('Mean Recovery % (\alpha \geq 0.3)', 'FontSize', 12);
-title('Ranking of Mitigation Actions by Effectiveness', 'FontSize', 14);
+ylabel('Mean LSR Recovery % (\alpha \geq 0.3)', 'FontSize', 12);
+title('Ranking of Mitigation Actions by LSR Recovery Effectiveness', 'FontSize', 14);
 grid on;
 for k = 1:numel(bar_data_sens)
     text(k, bar_data_sens(k) + 1, sprintf('%.1f%%', bar_data_sens(k)), ...
@@ -1269,8 +1269,8 @@ comp_tick_labels = {
     sprintf('C4: Worst Time\nRound{%s}\n+ Worst %s', worst_rounds_str, worst_action_name)
 };
 set(gca, 'XTickLabel', comp_tick_labels, 'FontSize', 9);
-ylabel('Mean Recovery %', 'FontSize', 12);
-title('Comparison: Optimal Timing (Cascade Round) x Best Action', 'FontSize', 14);
+ylabel('Mean LSR Recovery %', 'FontSize', 12);
+title('Comparison: Optimal Timing (Cascade Round) x Best Action — LSR (R_1) Recovery', 'FontSize', 14);
 grid on;
 
 % 在柱子上方标注数值
@@ -1303,7 +1303,7 @@ imagesc(1:plot_max_round, alpha_range, action_recovery_by_round_best');
 set(gca, 'YDir', 'normal');
 colorbar; colormap(hot);
 xlabel('Cascade Round'); ylabel('\alpha');
-title(sprintf('Recovery %%: Best Action (%s)', best_action_name));
+title(sprintf('LSR Recovery %%: Best Action (%s)', best_action_name));
 % 用竖线标注best_rounds
 hold on;
 for r = best_rounds
@@ -1316,7 +1316,7 @@ imagesc(1:plot_max_round, alpha_range, action_recovery_by_round_worst');
 set(gca, 'YDir', 'normal');
 colorbar; colormap(hot);
 xlabel('Cascade Round'); ylabel('\alpha');
-title(sprintf('Recovery %%: Worst Action (%s)', worst_action_name));
+title(sprintf('LSR Recovery %%: Worst Action (%s)', worst_action_name));
 hold on;
 for r = best_rounds
     xline(r, 'g--', 'LineWidth', 1.5);
