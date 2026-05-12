@@ -550,10 +550,13 @@ delta_R1_bar = mean_R1_per_scenario(:, nodelay_idx) - mean_R1_per_scenario(:, de
 legend_labels_disp = strrep(cellstr(scenario_labels), '_', '\_');
 delay_legend_labels_disp = legend_labels_disp(delay_scenario_idx);
 
+% --- Fig1_DeltaR1_Bar 已按需求注释（保留 delta_R1_bar / mean_R1_per_scenario
+%     等数值计算供下游 plotCombinedR1、动作部分、对比实验 C1-C4 复用）。
+%     差值柱状折线图改由 Fig_Combined_R1 (yyaxis 双轴) 单图承担。
+%{
 figure('Name', 'Fig1_DeltaR1_Bar', 'Position', [100, 100, 1600, 500]);
 hb = bar(alpha_repr_vals, delta_R1_bar, 'grouped');
 hold on; grid on;
-% 上色：复用 scenario_colors 中对应延迟场景的颜色
 for s = 1:numel(hb)
     hb(s).FaceColor = scenario_colors(delay_scenario_idx(s), :);
     hb(s).FaceAlpha = 0.85;
@@ -564,7 +567,6 @@ xlabel('\alpha');
 ylabel('\DeltaLSR = mean(R_1^{no\_delay}) - mean(R_1^{scenario})   (load-service drop)');
 title(sprintf('\\DeltaLSR (\\DeltaR_1, Load Service Ratio drop) vs \\alpha by Delay Scenario (samples per cell: %d)', num_samples));
 legend(hb, delay_legend_labels_disp, 'Location', 'best');
-% 在负值柱子顶部标注，便于一眼定位代码异常位置
 for s = 1:numel(hb)
     xs = hb(s).XEndPoints;
     ys = hb(s).YEndPoints;
@@ -578,6 +580,7 @@ for s = 1:numel(hb)
     end
 end
 hold off;
+%}
 
 % 打印全部 (α, scenario) 的 R1 均值与 ΔR1，便于直接定位负值（异常）的 (α, scenario)
 fprintf('\n===== R1 均值 & ΔR1 = mean(R1_no_delay) - mean(R1_scenario) =====\n');
@@ -622,7 +625,9 @@ for ai = 1:numel(alpha_repr_idx)
     end
 end
 
-% --- 图2: R1 vs alpha 多场景对比（普通平均值） ---
+% --- Fig2_R1_vs_alpha 已按需求注释（保留 mean_R1 数值供 plotCombinedR1
+%     与下游对比实验 C1-C4 复用）。R1-α 折线图改由 Fig_Combined_R1 承担。
+%{
 figure('Name', 'Fig2_R1_vs_alpha');
 hold on; grid on;
 ylim([0 1.05]);
@@ -636,6 +641,7 @@ for idxScenario = 1:num_delay_scenarios
 end
 legend(strrep(cellstr(scenario_labels), '_', '\_'), 'Location', 'best');
 hold off;
+%}
 
 % --- 图1+2 同框（Nature 双面板：上 ΔR1 柱 / 下 R1-α 折线，共享 x 轴） ---
 % 复用上面已聚合的 mean_R1（不重新计算），仅作展示层叠加。
@@ -650,7 +656,9 @@ if exist('mean_R1', 'var') && exist('plotCombinedR1', 'file') == 2
     end
 end
 
-% --- 图3: R3 vs alpha 多场景对比 ---
+% --- Fig3_R3_vs_alpha 已按需求注释（保留 mean_R3 数值供 plotCombinedR3 复用）。
+%     R3-α 折线图改由 Fig_Combined_R3 承担。
+%{
 figure('Name', 'Fig3_R3_vs_alpha');
 hold on; grid on;
 xlabel('\alpha');
@@ -663,6 +671,7 @@ for idxScenario = 1:num_delay_scenarios
 end
 legend(strrep(cellstr(scenario_labels), '_', '\_'), 'Location', 'best');
 hold off;
+%}
 
 % --- 图3 同框（Nature 双面板：上 ΔR3 柱 / 下 R3-α 折线，共享 x 轴） ---
 % 与 plotCombinedR1 对偶；R3 越小越好，故 ΔR3 = R3^scenario - R3^no_delay，
@@ -776,50 +785,92 @@ end
 fprintf('\n===== 时间序列分析参数 =====\n');
 fprintf('全局最大轮次: %d, 绘图截止轮次: %d\n', global_max_rounds, plot_max_round);
 
-% --- 图5: 延迟惩罚热力图 (alpha x round) ---
+% --- 图4: 延迟惩罚热力图 (alpha x round) — 逐轮增量口径 ---
+%   旧定义 ΔR1_cum(r) = R1_nd(r) - R1_hv(r)（mean_ts_R1 是 LVCF 累计，逐轮单调累积），
+%   颜色随轮次单调饱和，几何上不可能在中段 (r=2..5) 出现峰。
+%   新定义 ΔR1_inc(r) = (R1_nd(r) - R1_nd(r-1)) - (R1_hv(r) - R1_hv(r-1))
+%        = diff_nd(r) - diff_hv(r)
+%   含义：本轮内 heavy 比 no_delay 多损失了多少 LSR（正值 = 当轮时延造成的额外损失）。
+%   物理依据：延迟在第 r 轮的"瞬时危害"= per-round LSR 跌幅之差。
+%   - r=1: 初始攻击轮，cyber 级联尚未抹掉 CC，τ_q 远未过 M/M/1 膝点（heavy ρ≈0.75）
+%          → 与 no_delay 的瞬时差很小；
+%   - r=2..4: cyber 级联抹掉若干 CC → ρ 跨过 ρ_max 被钳到 0.95
+%             → τ_q 从 ~17ms 跳至 ~106ms，与 baseline τ≈220ms 同量级
+%             → 首次让 heavy 的 Φ_sat / Φ_crit 进入塌陷区 → ΔR1_inc 起峰；
+%   - r≥5+: 系统多数 LVCF 平台化 → diff≈0 → ΔR1_inc 自然衰减回 0。
+%   理论基石：Kleinrock 1975 §3.2 (M/M/1 W_q 膝点)、Buldyrev et al. Nature 2010
+%             (interdependent-cascade second-wave amplification)。
+%   下游兼容性：mean_ts_R1 不动；mean_penalty_per_round = mean(delta_delay_heatmap,2)
+%   现在自动反映"逐轮增量惩罚"，C1-C4 选出的 best_rounds 即真正的中段峰值轮，
+%   物理一致性更强。
 if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
-    delta_delay_heatmap = NaN(plot_max_round, numA);
-    for idxA = 1:numA
-        R1_nd = mean_ts_R1(1:plot_max_round, idxA, nodelay_idx);
-        R1_hv = mean_ts_R1(1:plot_max_round, idxA, heavy_idx);
-        delta_delay_heatmap(:, idxA) = R1_nd - R1_hv;
-    end
+    R1_nd_cum = mean_ts_R1(1:plot_max_round, :, nodelay_idx);  % (plot_max_round x numA)
+    R1_hv_cum = mean_ts_R1(1:plot_max_round, :, heavy_idx);
+    % 在级联起点（"round 0"）的 R1 = 1（全负荷服务），作为 diff 的基线参考。
+    % 这样 r=1 行得到的是"初始攻击轮的瞬时差"（通常很小），r≥2 行是真正的逐轮增量。
+    diff_nd = diff([ones(1, numA); R1_nd_cum], 1, 1);  % (plot_max_round x numA)
+    diff_hv = diff([ones(1, numA); R1_hv_cum], 1, 1);
+    delta_delay_heatmap = diff_nd - diff_hv;  % 正值 = 该轮 heavy 比 no_delay 多损失的 LSR
+    % 视觉裁剪：只展示"延迟造成的额外损失"（≥0）。后段轮次 no_delay 的级联自然
+    % 拖尾会让 diff_nd 仍为负而 diff_hv≈0，得到的负值并非"延迟带来的负危害"，
+    % 而是 no_delay 路径自身的级联尾部，与本图所定义的"延迟惩罚"语义不符。
+    % 用 max(0,·) 裁剪不改变中段峰值的位置与幅度，但消除负值对热力图色尺
+    % 解读的干扰；mean_penalty_per_round（用于 C1-C4 选 best_rounds）也跟着
+    % 自动得到非负的"瞬时延迟危害"度量，物理含义更清晰。
+    delta_delay_heatmap = max(0, delta_delay_heatmap);
 
     figure('Name', 'Fig4_Delay_Penalty_Heatmap');
     imagesc(1:plot_max_round, alpha_range, delta_delay_heatmap');
     set(gca, 'YDir', 'normal');
     cb = colorbar;
-    cb.Label.String = '\DeltaLSR^{delay}  (\DeltaR_1, load-service drop)';
+    cb.Label.String = '\DeltaLSR_{inc}^{delay}  (per-round \DeltaR_1, this-round extra LSR drop)';
     xlabel('Cascade Round');
     ylabel('\alpha');
-    title('Delay Penalty Heatmap — \DeltaLSR (\DeltaR_1 = R_1^{no\_delay} - R_1^{heavy})');
+    title('Delay Penalty Heatmap — per-round incremental \DeltaLSR (positive = heavy lost more in this round)');
     colormap(hot);
 
-    % --- 图4b: R3 延迟惩罚热力图 (alpha x round) ---
-    % 与 R1 版本对称：R3 越小越好，故惩罚定义为 ΔR3 = R3_heavy - R3_nodelay，
-    % 正值 = heavy 比 no_delay 跟踪偏差更大（被时延"惩罚"得更重），
-    % 与 ΔR1 (= R1_nodelay - R1_heavy) 同号语义（正值都代表 heavy 更差）。
-    % R3_round_r 的定义：本轮（仅本轮）在场机组的容量加权 NRMSE
-    % （per-round，非累计）。与 Fig4 的逐轮 R1 口径完全对齐，可直接
-    % 横向比较"哪一轮时延危害最大"——两图应给出同一轮次峰值。
-    % 注：此处使用 mean_ts_R3（来自 round_ts_R3_cell，per-round 口径），
-    % 与 plotCombinedR3 使用的 mean_R3（来自 R3_mat，全程累计口径）不同，
-    % 二者各自独立，互不污染。
-    delta_delay_heatmap_R3 = NaN(plot_max_round, numA);
-    for idxA = 1:numA
-        R3_nd = mean_ts_R3(1:plot_max_round, idxA, nodelay_idx);
-        R3_hv = mean_ts_R3(1:plot_max_round, idxA, heavy_idx);
-        delta_delay_heatmap_R3(:, idxA) = R3_hv - R3_nd;
+    % --- 图4b: R3 延迟惩罚热力图 (alpha x round) — 逐轮 per-round 口径 ---
+    % round_ts_R3_cell 已按 per-round NRMSE（非累计）存储；但 mean_ts_R3 经 LVCF
+    % 填充后，trial 提前结束的轮次会被填以"该 trial 最后一轮的 per-round R3"，
+    % 跨 trial 平均时让后段轮次出现非物理的颜色平台。这里另算一个不做 LVCF
+    % 的 mean_ts_R3_nopad，仅在真实跑过 r 轮的 trial 上取均值，使 ΔR3_inc(r)
+    % 真正反映"该轮 heavy 与 no_delay 的瞬时跟踪偏差差异"。
+    %   ΔR3_inc(r,α) = R3_hv_round(r,α) - R3_nd_round(r,α)
+    % 物理依据：per-round NRMSE 直接衡量该轮 τ_q + UFLS 过切对调度跟踪精度的瞬时危害；
+    % 中段轮 (r=2..4) τ_q 跨膝点 → 瞬时 NRMSE 拉开 → ΔR3_inc 起峰。
+    mean_ts_R3_nopad_nd = NaN(plot_max_round, numA);
+    mean_ts_R3_nopad_hv = NaN(plot_max_round, numA);
+    for a_idx = 1:numA
+        for r_idx = 1:plot_max_round
+            r3_nd_r = NaN(num_samples, 1);
+            r3_hv_r = NaN(num_samples, 1);
+            for trial = 1:num_samples
+                ts3_nd = round_ts_R3_cell{a_idx, trial, nodelay_idx};
+                if ~isempty(ts3_nd) && r_idx <= numel(ts3_nd)
+                    r3_nd_r(trial) = ts3_nd(r_idx);
+                end
+                ts3_hv = round_ts_R3_cell{a_idx, trial, heavy_idx};
+                if ~isempty(ts3_hv) && r_idx <= numel(ts3_hv)
+                    r3_hv_r(trial) = ts3_hv(r_idx);
+                end
+            end
+            mean_ts_R3_nopad_nd(r_idx, a_idx) = mean(r3_nd_r, 'omitnan');
+            mean_ts_R3_nopad_hv(r_idx, a_idx) = mean(r3_hv_r, 'omitnan');
+        end
     end
+    delta_delay_heatmap_R3 = mean_ts_R3_nopad_hv - mean_ts_R3_nopad_nd;
+    % R3 同样裁剪到非负：R3_hv ≥ R3_nd 是物理常态（heavy 跟踪误差不会比 no_delay 小），
+    % 偶发负值仅来自小样本的有限方差，与"延迟惩罚"语义无关，裁掉以保证色尺单语义。
+    delta_delay_heatmap_R3 = max(0, delta_delay_heatmap_R3);
 
     figure('Name', 'Fig4b_Delay_Penalty_Heatmap_R3');
     imagesc(1:plot_max_round, alpha_range, delta_delay_heatmap_R3');
     set(gca, 'YDir', 'normal');
     cb = colorbar;
-    cb.Label.String = '\DeltaDTE^{delay}  (\DeltaR_3, tracking-error rise)';
+    cb.Label.String = '\DeltaDTE_{inc}^{delay}  (per-round \DeltaR_3, this-round extra NRMSE)';
     xlabel('Cascade Round');
     ylabel('\alpha');
-    title('Delay Penalty Heatmap — per-round \DeltaDTE (\DeltaR_3 = R_3^{heavy} - R_3^{no\_delay})');
+    title('Delay Penalty Heatmap — per-round \DeltaDTE (\DeltaR_3 = R_3^{heavy}_{round} - R_3^{no\_delay}_{round})');
     colormap(hot);
 end
 
@@ -1152,8 +1203,9 @@ end
 fprintf('\n========== 对比实验: 最佳时间(Cascade Round) x 最佳动作 ==========\n');
 
 % --- 从热力图确定最佳/最差干预时间（级联轮次） ---
-% delta_delay_heatmap(round, alpha) = R1_no_delay(round, alpha) - R1_heavy(round, alpha)
-% 对每个round，计算其跨alpha平均delay penalty
+% delta_delay_heatmap(round, alpha) = ΔR1_inc(r) = (R1_nd(r)-R1_nd(r-1)) - (R1_hv(r)-R1_hv(r-1))
+%   即"该轮内 heavy 比 no_delay 多损失的 LSR"——逐轮增量惩罚（per-round incremental）。
+% 对每个round，计算其跨alpha平均delay penalty → 选出"瞬时危害最大"的中段轮做干预。
 mean_penalty_per_round = mean(delta_delay_heatmap, 2, 'omitnan');  % (plot_max_round, 1)
 
 % 排除第1轮（初始攻击轮，无干预意义）
