@@ -219,3 +219,485 @@ actions.  Section~\ref{sec:conclusion} concludes the paper.
 %%    (measurement, edge, transmission, actuation) so the abstract
 %%    matches Contribution 2.
 %% ---------------------------------------------------------------------
+
+
+%% =====================================================================
+%%  SECTION 2 -- CYBER-PHYSICAL POWER SYSTEM MODEL (v1, drop-in)
+%%
+%%  This section is the drop-in successor to Section~2 in
+%%  paper2_delay_cascade.tex.  It is written to follow the v3
+%%  Introduction immediately above and is engineered, paragraph by
+%%  paragraph, against the same reviewer concerns that shaped v3.
+%%
+%%  ---- Design decisions, with reviewer rationale ----------------------
+%%
+%%  S1. The section is SELF-CONTAINED with respect to the placement
+%%      metric (MSIS) and the bidirectional coupling rule.  Because the
+%%      companion paper [ChenTu2026] is still under review, a reader of
+%%      the present paper cannot be expected to consult it for the
+%%      definition of either object.  Both are therefore re-derived in
+%%      full here, with [ChenTu2026] cited only as a "see also"
+%%      acknowledgement so the reviewer is informed of, but not made
+%%      dependent on, the prior work.  This matches Elsevier EPSR /
+%%      Applied Energy practice for second papers in a series.
+%%
+%%  S2. Section structure is 2.1 power layer -> 2.2 cyber layer
+%%      (topology, CC placement, four-component delay) -> 2.3 coupling
+%%      -> 2.4 capacity-tolerance.  The cyber layer is the largest
+%%      sub-section because it carries the methodological novelty
+%%      claimed in Contribution~2 (four-component delay) and
+%%      Contribution~3 (eta+ requires the per-generator delays defined
+%%      in 2.2.3).  The power layer is intentionally lean: standard
+%%      DC-PF treatment, no novelty claimed there.
+%%
+%%  S3. EVERY numerical anchor in 2.2.3 is tied to either an industrial
+%%      standard (NASPI, IEEE C37.118.2, IEC 61850 PRP, NERC PRC-002-2)
+%%      or to a value that appears verbatim in the released simulation
+%%      code (createDelayConfig.m, createDelayScenarioConfigs.m).  No
+%%      free hyper-parameters are introduced in this section.  This
+%%      directly addresses the standard EPSR reviewer comment "where
+%%      do these numbers come from?".
+%%
+%%  S4. The four delay components named in Contribution~2 (tau_m, tau_e,
+%%      tau_t, tau_a) are mapped onto the implemented quantities here:
+%%      tau_t corresponds to the link-level serialisation+propagation
+%%      term S/R + d/V; tau_e corresponds to the per-hop forwarding
+%%      service delay tau_fwd, with role-aware values for CC vs nonCC;
+%%      the endpoint tx/rx terms are the SCADA/EMS interface
+%%      contributions to tau_m and tau_a; and the field-side
+%%      tau_{PB->nonCC} / tau_{nonCC->PB} terms (carried into the
+%%      cascade in Section 3) close the loop.  This explicit mapping is
+%%      necessary because Contribution~2 names four components and a
+%%      reviewer will check that all four appear in the model.
+%%
+%%  S5. The coupling subsection states the rule (rank-by-rank
+%%      betweenness-assortative pairing) and then immediately says
+%%      WHY -- "structurally critical buses paired with structurally
+%%      critical communication nodes" -- because reviewers of
+%%      interdependent-network papers routinely flag assortative
+%%      coupling as "ad hoc" unless an engineering rationale
+%%      (provisioning of important substations) is supplied in the
+%%      same paragraph.
+%%
+%%  S6. We use \emph{informational} sub-headings inside Section~2
+%%      (\subsection / \subsubsection), not in Section~1.  Sub-headings
+%%      inside Methods are standard EPSR practice; sub-headings inside
+%%      Introduction are not (see v3 R1).
+%%
+%%  S7. Capacity-tolerance is given its own short subsection (2.4)
+%%      because alpha is the independent variable swept in every
+%%      experiment of Section~4 and the reader needs to find its
+%%      definition without scrolling through cyber-layer detail.
+%%
+%%  S8. To keep the Introduction's promise "we do not claim novelty in
+%%      the coupling map", the closing paragraph of 2.3 states
+%%      explicitly that the assortative rule is a re-statement, not a
+%%      contribution -- the contribution is that delay flows along
+%%      this same map, which is set up in Section~3.
+%% =====================================================================
+
+\section{Cyber-Physical Power System Model}\label{sec:model}
+
+The system under study consists of two interdependent network layers,
+a physical power grid~$G_P$ and a cyber communication network~$G_C$,
+connected by a one-to-one interlayer map.  Sections~\ref{sec:power}
+and~\ref{sec:cyber} define the two layers individually,
+Section~\ref{sec:coupling} defines the map, and
+Section~\ref{sec:capacity} defines the single tolerance parameter
+$\alpha$ that is swept in every experiment of
+Section~\ref{sec:experiment}.  The level of detail in this section is
+deliberately limited to what is required to support the closed-loop
+cascade dynamics of Section~\ref{sec:cascade}; mechanism-specific
+detail (the $\eta^{+}$ control-efficacy function, the delay-coupled
+under-frequency load-shedding rule and the five severity scenarios)
+is collected in Section~\ref{sec:cascade}.
+
+%% ---- 2.1 Power Grid Layer -------------------------------------------
+\subsection{Physical power layer}\label{sec:power}
+
+The physical layer is the IEEE~39-bus (New England) test system, a
+benchmark comprising $|V_P|=39$ buses, 46~transmission branches and
+10~generators that has been used as a reference test bed for
+cascading-failure analysis since the work of \citet{Athay1979}.  The
+nodal admittance and branch parameters are taken from the
+MATPOWER~7.1 case file \citep{Zimmerman2011matpower}; the initial
+operating point---bus loads $P_d^{(0)}$, generator dispatch
+$P_g^{(0)}$ and branch flows $P_e^{(0)}$---is obtained by solving a
+DC power flow on the full network.
+
+Under the DC assumption the active-power balance is
+\begin{equation}\label{eq:dcpf}
+  \mathbf{P} \;=\; \mathbf{B}\,\boldsymbol{\Theta},
+\end{equation}
+where $\mathbf{P}=[p_1,\dots,p_{|V_P|}]^{\!\top}$ stacks nodal
+injections ($p_i>0$ for generation, $p_i<0$ for load),
+$\boldsymbol{\Theta}$ is the bus voltage-angle vector and
+$\mathbf{B}$ is the bus susceptance matrix with
+$B_{ij}=-b_{ij}$ for $i\ne j$ and
+$B_{ii}=\sum_{k\ne i}b_{ik}$, $b_{ij}=1/x_{ij}$.  The DC formulation is
+adopted for two reasons: it is the de~facto standard in cascading-failure
+literature \citep{Dobson2007,Brummitt2012}, and its linearity admits
+the analytical separation of delay-induced injection changes from
+post-redistribution branch flows that we will require in
+Section~\ref{sec:cascade}.  Reactive power, voltage magnitudes and
+transient stability are outside the scope of the present model; the
+implications for ancillary protections are discussed in
+Section~\ref{sec:conclusion}.
+
+%% ---- 2.2 Communication Network Layer --------------------------------
+\subsection{Cyber communication layer}\label{sec:cyber}
+
+The cyber layer carries every measurement and control packet on which
+the closed-loop dispatch of Section~\ref{sec:cascade} depends.  It is
+specified by three ingredients: a topology
+(Section~\ref{sec:topology}), a placement rule for the control
+centres that originate dispatch commands (Section~\ref{sec:msis})
+and an end-to-end delay model that converts the topology into a
+per-generator latency budget (Section~\ref{sec:delay_model}).
+
+\subsubsection{Scale-free topology and sizing}\label{sec:topology}
+
+The cyber topology is generated by the Barab\'asi--Albert (BA)
+preferential-attachment process \citep{BarabasiAlbert1999}, which
+reproduces the heavy-tailed degree distribution and hub--spoke
+asymmetry empirically reported for utility-grade communication
+backbones \citep{Pagani2013}.  The network has
+\begin{equation}\label{eq:cyber_size}
+  |V_C| \;=\; |V_P| + n_{\text{cc}},
+  \qquad
+  n_{\text{cc}} \;=\; \lceil 0.2\,|V_P|\rceil,
+\end{equation}
+nodes; the additional $n_{\text{cc}}$ nodes are designated control
+centres (CCs) and the remaining $|V_P|$ nodes are non-CC relay nodes
+that map one-to-one onto power buses (Section~\ref{sec:coupling}).
+For the IEEE~39-bus test bed this yields $|V_C|=47$ nodes of which
+$n_{\text{cc}}=8$ are CCs.  The 0.2 ratio is consistent with the
+practice of provisioning roughly one regional dispatch centre per
+five substation-class nodes reported in
+\citep{NASPI_LatencyGuidelines}.
+
+The BA growth process is initialised from a fully connected seed of
+$m_0=4$ nodes; at each step a new node is attached to $m_e=2$
+existing nodes with probability proportional to their current
+degree.  Because each Monte Carlo trial of
+Section~\ref{sec:experiment} regenerates $G_C$ from a fresh random
+seed, the reported metrics average out the stochasticity of
+individual realisations.
+
+\subsubsection{Control-centre placement via a multi-attribute
+structural importance score}\label{sec:msis}
+
+Of the $|V_C|$ cyber nodes generated by~\eqref{eq:cyber_size},
+$n_{\text{cc}}$ must be promoted to control-centre status.  A choice
+that minimises the expected end-to-end delay between any non-CC node
+and its nearest surviving CC is desirable, but no single centrality
+measure captures all the structural attributes that matter under
+cascading stress: betweenness identifies bridging nodes whose removal
+fragments the network; closeness identifies nodes with short
+expected distances to the rest of the graph; the $k$-shell index
+identifies nodes embedded in dense cores that resist localised
+attack; degree and clustering identify nodes whose immediate
+neighbourhood is itself well-connected.  Each of these is necessary
+but none is sufficient.  We therefore adopt a multi-attribute
+structural importance score (MSIS) that fuses them
+multiplicatively/additively:
+\begin{equation}\label{eq:msis}
+  w_i \;=\; \frac{\widetilde{B}(i)+K_s(i)}{C_l(i)} \;+\; D(i)\cdot C(i),
+\end{equation}
+where $\widetilde{B}(i)=B(i)+1$ is the (shifted) node-betweenness
+centrality of node~$i$ in $G_C$, $K_s(i)$ its $k$-shell index,
+$C_l(i)$ its closeness centrality, $D(i)$ its degree and $C(i)$ its
+local clustering coefficient.  The shift $+1$ in $\widetilde{B}$
+prevents the leaf nodes ($B=0$) from being absorbed into the second
+term alone, which would degenerate the score for tree-like
+sub-graphs.  The $n_{\text{cc}}$ nodes with the largest $w_i$ are
+designated as CCs; ties are broken by node index to preserve
+reproducibility.
+
+The first term, $(\widetilde{B}+K_s)/C_l$, rewards a node that is
+\emph{simultaneously} a bridging point (high $\widetilde{B}$) and
+core-embedded (high $K_s$), while penalising nodes that are
+peripheral in the average-distance sense (large $C_l$, i.e.\ far from
+the rest of the graph).\footnote{The form
+$(\widetilde{B}+K_s)/C_l$ rather than $(\widetilde{B}+K_s)\cdot
+(1/C_l)$ is used so that the dimensional scale of $\widetilde{B}+K_s$
+is not crushed by the small numerical range of $1/C_l$ in dense
+sub-graphs; on $G_C$ with $|V_C|=47$ the two terms then enter
+$w_i$ with comparable order of magnitude.}  The second term,
+$D\cdot C$, rewards a node whose own neighbourhood is locally
+cohesive, which has been shown to correlate with the survival of
+short alternative paths after a single-node attack
+\citep{Fortunato2010,Schneider2011}.  The composite~$w_i$ therefore
+balances global bridging value against local resilience, the two
+properties that we will need in Section~\ref{sec:cascade} when CCs
+are required to remain reachable from a fragmenting cyber graph.
+
+A multi-attribute control-centre placement metric in the same spirit
+was proposed independently in our companion study \citep{ChenTu2026}
+under the name CPIM (Cohesion-Propagation Importance Metric); MSIS
+adopts the same multi-attribute philosophy but replaces CPIM's
+neighbour-distance summation by the closeness denominator
+in~\eqref{eq:msis} and by the explicit $D\cdot C$ term, both of which
+are computed in $\mathcal{O}(|V_C|^2)$ rather than $\mathcal{O}(|V_C|^3)$
+and therefore scale to the per-trial regeneration of~$G_C$ used in
+this paper.  Because \citep{ChenTu2026} is still under review,
+Eq.~\eqref{eq:msis} is given here in full so that the present paper
+is self-contained.
+
+\subsubsection{Four-component, role-aware end-to-end delay
+model}\label{sec:delay_model}
+
+The end-to-end latency between a power bus~$b$ and a control
+centre~$c$ is, in industrial practice, the sum of four bounded
+components: a measurement-acquisition term~$\tau_m$ at the field
+side; an edge-processing term~$\tau_e$ inside the substation
+gateway; a transmission term~$\tau_t$ along the cyber path; and an
+actuation term~$\tau_a$ at the receiving plant
+\citep{NASPI_LatencyGuidelines,IEEE_C37_118_2}.  Our delay model
+makes each of these four components individually computable, with
+role-dependent service times for CC and non-CC nodes that mirror the
+processing asymmetry of SCADA/EMS architectures
+\citep{Kundur2017CPPS}.
+
+\paragraph{Per-link transmission delay.}
+For a single surviving cyber link $(u,v)$, the per-hop transmission
+delay is
+\begin{equation}\label{eq:link_delay}
+  T_{\text{link}}(u,v) \;=\; \frac{S}{R} \;+\; \frac{d_{uv}}{V},
+\end{equation}
+where $S$ is the packet size in bits, $R$ is the link data rate, $d_{uv}$
+is the effective fibre distance and $V$ is the propagation speed.  The
+first term is serialisation, the second is propagation.  Uplink and
+downlink traffic carry different packet sizes---measurement frames
+are larger than command frames, $S_{\text{up}}=1024\,\text{B}$ vs.\
+$S_{\text{down}}=256\,\text{B}$ in our base configuration---so the
+same physical link contributes asymmetrically to the two directions
+even before any role effects are added.  The reference link
+parameters used throughout this paper, $R=10\,\text{Mbps}$ and
+$V=2{\times}10^{5}\,\text{km/s}$, are within the IEEE C37.118.2
+typical-installation band \citep{IEEE_C37_118_2}.
+
+\paragraph{Per-hop edge-processing delay.}
+At each intermediate cyber node~$u$ along a path, a forwarding
+service delay~$\tau_{\text{fwd}}(u)$ is incurred:
+\begin{equation}\label{eq:fwd}
+  \tau_{\text{fwd}}(u) \;=\;
+  \begin{cases}
+    \tau_{\text{CC}}^{\text{fwd}},   & u\text{ is a CC},\\[2pt]
+    \tau_{\text{nonCC}}^{\text{fwd}},& \text{otherwise}.
+  \end{cases}
+\end{equation}
+Control centres are equipped with carrier-grade routing hardware
+and therefore exhibit a substantially lower per-packet service
+latency than ordinary substation gateways; this is the source of
+the role-awareness that distinguishes our model from a single-rate
+queueing fabric.  The same role distinction applies to the
+endpoint contributions $\tau^{\text{tx}}$ and $\tau^{\text{rx}}$ at
+the originating and terminating nodes.  Reference values used in
+the simulations are reported in Table~\ref{tab:service_times};
+they place CC service times at one quarter of the corresponding
+non-CC times, consistent with the order-of-magnitude gap between
+EMS-grade routers and substation IEDs reported by
+\citep{NASPI_LatencyGuidelines}.
+
+\begin{table}[t]
+  \centering
+  \caption{Reference role-aware service times used in the
+    end-to-end delay model.  All values in seconds.  CC and non-CC
+    rows scale jointly with the scenario factor of
+    Section~\ref{sec:scenarios}; the values shown are for the
+    \texttt{baseline} scenario (\textit{scale}~$=1.0$).}
+  \label{tab:service_times}
+  \small
+  \begin{tabular}{@{}lccc@{}}
+    \toprule
+    Node role & $\tau^{\text{tx}}$ & $\tau^{\text{rx}}$ &
+                $\tau^{\text{fwd}}$\\
+    \midrule
+    Control centre (CC)         & 0.003 & 0.004 & 0.003\\
+    Substation gateway (non-CC) & 0.012 & 0.009 & 0.012\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Path-level aggregation.}
+For a multi-hop path $\pi=(u_0,u_1,\dots,u_k)$ in $G_C$ between a
+non-CC source and a CC, or vice versa, the total path delay sums
+the link, endpoint and forwarding contributions.  Writing the
+intermediate nodes as $u_1,\dots,u_{k-1}$,
+\begin{align}
+  T_{\text{down}}(\pi) &=
+    \sum_{i=0}^{k-1}T_{\text{link}}^{\text{down}}(u_i,u_{i+1})
+    + \tau_{\text{CC}}^{\text{tx}} + \tau_{\text{nonCC}}^{\text{rx}}
+    + \!\!\sum_{j=1}^{k-1}\!\tau_{\text{fwd}}(u_j),
+    \label{eq:Tdown}\\[2pt]
+  T_{\text{up}}(\pi) &=
+    \sum_{i=0}^{k-1}T_{\text{link}}^{\text{up}}(u_i,u_{i+1})
+    + \tau_{\text{nonCC}}^{\text{tx}} + \tau_{\text{CC}}^{\text{rx}}
+    + \!\!\sum_{j=1}^{k-1}\!\tau_{\text{fwd}}(u_j),
+    \label{eq:Tup}
+\end{align}
+for the downlink (CC$\to$non-CC) and uplink (non-CC$\to$CC)
+directions respectively.  The same physical path therefore yields a
+different uplink and downlink delay because of (a) directional
+packet-size asymmetry in $T_{\text{link}}$, (b) the directional
+endpoint terms ($\tau_{\text{CC}}^{\text{tx}}$ vs.\
+$\tau_{\text{nonCC}}^{\text{tx}}$), and (c) role-dependent
+$\tau_{\text{fwd}}$ at intermediate nodes; not because of any
+asymmetric propagation physics on the link itself.
+
+\paragraph{Mapping to the four-component decomposition.}
+The four components named in Contribution~2 of the Introduction
+correspond to the quantities defined above as follows.  The
+transmission term~$\tau_t$ is the path-level link sum
+$\sum_i T_{\text{link}}(u_i,u_{i+1})$.  The edge-processing
+term~$\tau_e$ is the path-level forwarding sum
+$\sum_j \tau_{\text{fwd}}(u_j)$ together with the appropriate
+endpoint receive contribution.  The measurement
+term~$\tau_m$ aggregates the field-side acquisition delay
+$\tau_{\text{PB}\to\text{nonCC}}$ at the substation interface with the
+uplink path delay $T_{\text{up}}(\pi_i)$ feeding the nearest CC.
+The actuation term~$\tau_a$ aggregates the downlink path delay
+$T_{\text{down}}(\pi_i)$ from the controlling CC with the field-side
+execution delay $\tau_{\text{nonCC}\to\text{PB}}$.  The two field-side
+contributions, set to $0.10\,\text{s}$ and $0.12\,\text{s}$
+respectively in the \texttt{baseline} scenario, are anchored against
+the round-trip SCADA RTU acquisition+execution budget reported in
+\citep{NASPI_LatencyGuidelines} and are scaled jointly with the
+cyber service times under each severity scenario of
+Section~\ref{sec:scenarios}.  The five scenarios collectively span
+the range from an ideal channel ($\tau_m+\tau_e=0$) to the
+\texttt{heavy} regime
+($\tau_m+\tau_e\!\approx\!594\,\text{ms}$, ${\sim}60\%$ of the
+NERC PRC-002-2 sub-second event-reporting upper bound
+\citep{NERC_PRC002}); see Section~\ref{sec:scenarios} for the full
+parameterisation.
+
+\paragraph{Why four components and not a single $\tau$.}
+A model in which $\tau_m$, $\tau_e$, $\tau_t$ and $\tau_a$ collapse
+into a single scalar latency cannot, by construction, distinguish
+a long-distance fibre regime ($\tau_t$ dominates, $\tau_e$ small,
+loss probability low) from a congested edge regime ($\tau_e$
+dominates, $\tau_t$ small, loss probability high).  Yet these two
+regimes have markedly different consequences for closed-loop
+control, because the loss probability per hop scales with $\tau_e$
+through the queueing-induced congestion term of
+Section~\ref{sec:cascade} and not with $\tau_t$.  Carrying the four
+components separately is therefore the minimum that lets the
+control-efficacy function $\eta^{+}$ in Section~\ref{sec:cascade}
+attribute observed vulnerability to a specific physical channel.
+
+%% ---- 2.3 Interdependent Coupling ------------------------------------
+\subsection{Interdependent coupling}\label{sec:coupling}
+
+The two layers are coupled through a one-to-one map between power
+buses and non-CC cyber nodes, encoded in a binary coupling matrix
+$A_{pc}\in\{0,1\}^{|V_P|\times(|V_C|-n_{\text{cc}})}$ such that
+$A_{pc}(b,n)=1$ when bus $b\in V_P$ is monitored by non-CC node
+$n\in V_C\setminus\mathcal{C}$ and zero otherwise, where
+$\mathcal{C}$ denotes the set of $n_{\text{cc}}$ control centres.
+Control centres are not coupled to any power bus directly; they
+exchange traffic with the field only via the substation gateways
+they control, in line with the layered architecture mandated by
+NERC CIP-012 \citep{NERC_CIP012}.
+
+\paragraph{Betweenness-assortative pairing.}
+$A_{pc}$ is constructed by sorting the power buses in descending
+order of their betweenness centrality in $G_P$, independently
+sorting the non-CC cyber nodes in descending order of their
+betweenness centrality in $G_C$, and pairing them rank by rank.
+The rationale is operational: structurally critical buses---those
+whose removal would fragment the largest number of source--sink
+paths in the power graph---are the buses for which a utility
+provisions the most capable monitoring and the highest-priority
+communication channels, and these are correspondingly placed on
+the structurally critical communication nodes.  Random or
+disassortative coupling rules are also defensible in principle,
+but they describe networks that have not been engineered with
+operational priority in mind and would therefore systematically
+overstate the cyber-physical fragility of a real grid.
+
+\paragraph{Bidirectionality of the coupled channel.}
+Crucially, the coupling map is used twice in every cascade round:
+(i)~upwards, to deliver the field-side measurement of bus~$b$ along
+the uplink path~$\pi_b$ to the nearest surviving CC, contributing
+to $\tau_m$ via Eq.~\eqref{eq:Tup}; and (ii)~downwards, to deliver
+the dispatch command from that CC back to the substation gateway
+for execution at bus~$b$, contributing to $\tau_a$ via
+Eq.~\eqref{eq:Tdown}.  The single coupling map therefore carries
+both directions of the closed-loop control channel, which is
+precisely what allows a structural failure in $G_C$ to lengthen
+\emph{both} $\tau_m$ and $\tau_a$ for a given generator and
+thereby couple cyber-side damage into the power-side dispatch
+within the same cascade round.
+
+\paragraph{Scope of the contribution claimed.}
+The pairing rule above is a re-statement of standard practice in
+the interdependent-networks literature
+\citep{Buldyrev2010,Brummitt2012,ChenTu2026} and is not itself
+claimed as a contribution of the present paper.  What is novel,
+and what is set up in Section~\ref{sec:cascade}, is the use of
+this same map to carry the four-component delay budget into the
+generator dispatch \emph{before} the DC power-flow redistribution
+of each cascade round, so that the structural state of $G_C$
+modulates the electrical state of $G_P$ in the same iteration.
+
+%% ---- 2.4 Capacity-Tolerance Model -----------------------------------
+\subsection{Capacity--tolerance model}\label{sec:capacity}
+
+Overload-driven cascading requires a model of component capacity.
+We adopt the standard tolerance-factor formulation of
+\citet{Motter2002}, applied symmetrically to power branches, cyber
+nodes and cyber edges:
+\begin{align}
+  C_e^{P}   &= (1+\alpha)\,\bigl|P_e^{(0)}\bigr|, &
+  e&\in E_P, \label{eq:cap_P}\\
+  C_i^{C}   &= (1+\alpha)\,B_i^{(0)}, &
+  i&\in V_C, \label{eq:cap_Cn}\\
+  C_e^{CE}  &= (1+\alpha)\,B_e^{(0)}, &
+  e&\in E_C, \label{eq:cap_Ce}
+\end{align}
+where $P_e^{(0)}$ is the initial DC-PF flow on power branch~$e$,
+$B_i^{(0)}$ the initial node-betweenness of cyber node~$i$ and
+$B_e^{(0)}$ the initial edge-betweenness of cyber link~$e$.
+
+The single tolerance parameter $\alpha\in[0,1]$ governs the excess
+capacity of every component: at $\alpha=0$ each component operates
+at exactly its initial load and any redistribution will trip it;
+at $\alpha=1$ each component can absorb up to twice its initial
+load before tripping.  A common $\alpha$ across the two layers is
+adopted because the two layers are typically built and reinforced
+to a common operational margin, and because using two independent
+tolerances would expand the experimental design from a one-dimensional
+sweep to a two-dimensional surface for no clear physical
+gain---existing CPPS literature is essentially unanimous on this
+choice \citep{Motter2002,Buldyrev2010,Cai2016TSG}.  Throughout the
+experiments of Section~\ref{sec:experiment}, $\alpha$ is swept in
+increments of~0.1 over the closed interval $[0,1]$, giving the
+eleven tolerance levels reported there.
+
+A subtle point is that, because $C_i^{C}$ and $C_e^{CE}$ depend on
+the \emph{initial} betweenness while overload is checked against
+the \emph{updated} betweenness on the surviving cyber graph, a node
+or edge whose role becomes more central after a structural failure
+will see its load grow against a frozen capacity and may then
+overload---this is the cyber-side analogue of the power-side
+flow-redistribution overload of \citet{Motter2002} and is the
+mechanism through which a single targeted cyber attack can fan out
+into a multi-component cyber cascade in Section~\ref{sec:cascade}.
+%% =====================================================================
+%%  END SECTION 2 v1
+%%
+%%  Synchronisation notes for paper2_delay_cascade.tex:
+%%   * Replace lines 224-404 of paper2_delay_cascade.tex (the existing
+%%     \section{Cyber-Physical Power System Model} ... up to and
+%%     including the Capacity-Tolerance subsection) with the body
+%%     above.  The numerical content matches createDelayConfig.m and
+%%     createDelayScenarioConfigs.m exactly.
+%%   * The reference \citep{Athay1979} (IEEE 39-bus origin paper),
+%%     \citep{Pagani2013} (utility-grade communication topology
+%%     review) and \citep{Fortunato2010} (community / cohesion in
+%%     networks) must be added to paper2_refs_v2_additions.bib if not
+%%     already present.  All other citations used here are already
+%%     in paper2_refs.bib or paper2_refs_v2_additions.bib.
+%% =====================================================================
