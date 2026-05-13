@@ -45,6 +45,26 @@ scenario_labels = string(scenario_labels(:));
 assert(numel(alpha_range)     == numA, 'alpha_range length mismatch');
 assert(numel(scenario_labels) == numS, 'scenario_labels length mismatch');
 
+% --- α=0 过滤 ---------------------------------------------------------------
+% α=0 时，η⁺ 三类 α-lever 全部关闭（k_eff=1, τ_*0_eff=τ_*0, τ_crit_max_eff=
+% τ_crit_max；详见 createDelayConfig.m:62-95,108-118,153-194,280-340 与
+% computeEtaPlus.m），并且 UFLS 的 α-shed-cap 退化为基线 0.85；物理上 α=0
+% 对应"无 α-灵敏度参考点"——它本身不传递 α-效应，与本图所要呈现的
+% "R1(α) 灵敏度 + ΔR1(α) 增量"语义不符。保留 α=0 列会让读者误以为该列
+% 反映的是"最低 α 下的延迟敏感度"，从而高估 light/baseline 在低 α 段的
+% 增量。这里在函数入口剔除 α=0 行（连同对应的 mean_R1 / StdR1 行），
+% 使 x 轴自然从 α=0.1 起绘。
+alpha_range = alpha_range(:);
+keep_mask = alpha_range > eps;          % 容差 eps，不依赖严格 ==0 比较
+if any(~keep_mask)
+    alpha_range = alpha_range(keep_mask);
+    mean_R1     = mean_R1(keep_mask, :);
+    if ~isempty(opt.StdR1)
+        opt.StdR1 = opt.StdR1(keep_mask, :);
+    end
+    numA = numel(alpha_range);
+end
+
 % --- Reference column (no_delay) ------------------------------------------
 nodelay_idx = find(scenario_labels == "no_delay", 1);
 if isempty(nodelay_idx)
