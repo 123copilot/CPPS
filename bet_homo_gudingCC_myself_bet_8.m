@@ -852,7 +852,7 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
     end
     if heatmap_max_round < 1
         % 兜底：至少画第 1 轮（攻击轮一定有数据）
-        heatmap_max_round = max(1, min(plot_max_round, 1));
+        heatmap_max_round = 1;
     end
     fprintf('热力图自适应轮数 heatmap_max_round = %d (full plot_max_round = %d)\n', ...
         heatmap_max_round, plot_max_round);
