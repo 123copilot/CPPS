@@ -822,25 +822,33 @@ fprintf('全局最大轮次: %d, 绘图截止轮次: %d\n', global_max_rounds, p
 %   后段因 trial 全部已 cascade 完毕、统计上无数据的列不再画为"假 0"，避免
 %   解读上把"无数据"误读成"延迟无危害"。
 if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
-    % --- 计算 heatmap_max_round：heavy & no_delay 两个场景在所有 α 上同时
-    %     至少 30% trial 覆盖的最大轮次（统计上有意义的窗口） ---
+    % --- 计算 heatmap_max_round：以 no_delay (基线) 在所有 α 上同时
+    %     至少 30% trial 覆盖的最大轮次为窗口上限 ---
+    %
+    % 物理意义说明（修正 5_14 那次过短窗口的关键）：
+    %   早先版本要求 heavy 与 no_delay 在每个 α 上**同时** ≥30% trial 覆盖，
+    %   等价于"画图窗口取两者短板"。但本研究恰恰要呈现"延迟把级联打短"
+    %   这一现象 —— 用 heavy 自身的存活轮数当作画图窗口上限，会让窗口被
+    %   heavy 的早塌强行锁死（如 5_14 实验中只剩 r=1），把 no_delay 真实
+    %   能跑到的 8-12 轮信息一并截掉，且让"中段延迟峰"在画面里根本无处
+    %   可显。
+    %   改用 no_delay 单覆盖：基线能跑到第 r 轮，热力图就显示到第 r 轮；
+    %   heavy 在 r' < r 已塌方的轮次显示为 NaN（透明），这样既保留"基线
+    %   能跑 10+ 轮"的真实信息，又能让 heavy 的"提前塌方"作为信息本身被
+    %   读出来 —— 中段轮次正是 heavy 还没塌方但 τ_q 已跨膝的危害高发区。
     cov_threshold = max(1, ceil(num_samples * 0.30));
     heatmap_max_round = 0;
     for r_check = 1:plot_max_round
         ok = true;
         for a_idx_chk = 1:numA
-            n_nd = 0; n_hv = 0;
+            n_nd = 0;
             for trial = 1:num_samples
                 ts_nd_chk = round_ts_R1_cell{a_idx_chk, trial, nodelay_idx};
-                ts_hv_chk = round_ts_R1_cell{a_idx_chk, trial, heavy_idx};
                 if ~isempty(ts_nd_chk) && r_check <= numel(ts_nd_chk) && ~isnan(ts_nd_chk(r_check))
                     n_nd = n_nd + 1;
                 end
-                if ~isempty(ts_hv_chk) && r_check <= numel(ts_hv_chk) && ~isnan(ts_hv_chk(r_check))
-                    n_hv = n_hv + 1;
-                end
             end
-            if n_nd < cov_threshold || n_hv < cov_threshold
+            if n_nd < cov_threshold
                 ok = false; break;
             end
         end
@@ -885,37 +893,48 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
                     end
                 end
             end
-            delta_delay_heatmap(r_idx, a_idx) = ...
-                mean(d_hv_r, 'omitnan') - mean(d_nd_r, 'omitnan');
+            % 仅在 heavy 与 no_delay 该 (α,r) 都有 ≥1 trial 时才作差，
+            % 否则保留 NaN（透明显示），避免把"无数据"误绘成"零延迟惩罚"。
+            n_nd_valid = sum(~isnan(d_nd_r));
+            n_hv_valid = sum(~isnan(d_hv_r));
+            if n_nd_valid >= 1 && n_hv_valid >= 1
+                d_val = mean(d_hv_r, 'omitnan') - mean(d_nd_r, 'omitnan');
+                % 视觉裁剪：仅展示"延迟造成的额外失负荷"（≥0）；偶发负值
+                % （heavy 该轮少损失）仅来自有限样本方差，与"延迟惩罚"
+                % 语义无关，裁掉以保证色尺单语义。
+                delta_delay_heatmap(r_idx, a_idx) = max(0, d_val);
+            end
+            % else: leave as NaN → imagesc 配合 AlphaData 显示透明 → 黑底
         end
     end
-    % 视觉裁剪：只展示"延迟造成的额外失负荷"（≥0）；偶发负值（heavy 该轮少损失）
-    % 仅来自有限样本方差，与"延迟惩罚"语义无关，裁掉以保证色尺单语义。
-    delta_delay_heatmap = max(0, delta_delay_heatmap);
 
-    figure('Name', 'Fig4_Delay_Penalty_Heatmap');
-    imagesc(1:heatmap_max_round, alpha_range, delta_delay_heatmap');
-    set(gca, 'YDir', 'normal');
-    xlim([0.5, heatmap_max_round + 0.5]);
+    figure('Name', 'Fig4_Delay_Penalty_Heatmap', 'Color', 'w');
+    ax_h = axes;
+    h_im = imagesc(ax_h, 1:heatmap_max_round, alpha_range, delta_delay_heatmap');
+    % NaN → 透明，让"无数据"与"零惩罚"在视觉上可分（透明位置显示 axis 黑底）。
+    set(h_im, 'AlphaData', ~isnan(delta_delay_heatmap'));
+    set(ax_h, 'YDir', 'normal', 'Color', 'k');
+    xlim(ax_h, [0.5, heatmap_max_round + 0.5]);
+    % 强制 x 轴为整数级联轮次刻度（修正 5_14 出现 0.5/1.5/2.5 的缺陷）。
+    xticks(ax_h, 1:heatmap_max_round);
+    yticks(ax_h, alpha_range);
     cb = colorbar;
     cb.Label.String = '\DeltaLSR_{inc}^{delay}  (per-round \DeltaR_1, this-round extra LSR drop)';
     xlabel('Cascade Round');
     ylabel('\alpha');
-    title('Delay Penalty Heatmap — per-round incremental \DeltaLSR (positive = heavy lost more in this round)');
+    title('Delay Penalty Heatmap — per-round incremental \DeltaLSR (positive = heavy lost more in this round; black = no trials reached)');
     colormap(hot);
 
     % --- 图4b: R3 延迟惩罚热力图 (alpha x round) — 逐轮 per-round 口径 ---
     % round_ts_R3_cell 已按 per-round NRMSE（非累计）存储；这里同样不做 LVCF，
-    % 仅在真实跑过 r 轮的 trial 上取均值，使 ΔR3_inc(r) 真正反映"该轮 heavy
-    % 与 no_delay 的瞬时跟踪偏差差异"。
-    %   ΔR3_inc(r,α) = R3_hv_round(r,α) - R3_nd_round(r,α)
-    % 物理依据：per-round NRMSE 直接衡量该轮 τ_q + UFLS 过切对调度跟踪精度的
-    % 瞬时危害；中段轮 (r=2..4) τ_q 跨膝点 → 瞬时 NRMSE 拉开 → ΔR3_inc 起峰。
-    %
-    % x 轴使用与 Fig4 相同的 heatmap_max_round 截尾，避免后段无数据列被画为
-    % 假"0"黑色。
+    % 仅在真实跑过 r 轮的 trial 上取均值，使 ΔR3_inc(r) 真正反映"该轮 τ_q + UFLS
+    % 过切对调度跟踪精度的瞬时危害"；中段轮 τ_q 跨膝点 → 瞬时 NRMSE 拉开 →
+    % ΔR3_inc 起峰。
+    % x 轴使用与 Fig4 相同的 heatmap_max_round 截尾，并同样对 heavy/no_delay
+    % 缺数据的格子保留 NaN→透明（黑），避免后段无数据列被画为假"0"。
     mean_ts_R3_nopad_nd = NaN(heatmap_max_round, numA);
     mean_ts_R3_nopad_hv = NaN(heatmap_max_round, numA);
+    valid_mask_R3 = false(heatmap_max_round, numA);
     for a_idx = 1:numA
         for r_idx = 1:heatmap_max_round
             r3_nd_r = NaN(num_samples, 1);
@@ -930,24 +949,34 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
                     r3_hv_r(trial) = ts3_hv(r_idx);
                 end
             end
-            mean_ts_R3_nopad_nd(r_idx, a_idx) = mean(r3_nd_r, 'omitnan');
-            mean_ts_R3_nopad_hv(r_idx, a_idx) = mean(r3_hv_r, 'omitnan');
+            n_nd_valid = sum(~isnan(r3_nd_r));
+            n_hv_valid = sum(~isnan(r3_hv_r));
+            if n_nd_valid >= 1 && n_hv_valid >= 1
+                mean_ts_R3_nopad_nd(r_idx, a_idx) = mean(r3_nd_r, 'omitnan');
+                mean_ts_R3_nopad_hv(r_idx, a_idx) = mean(r3_hv_r, 'omitnan');
+                valid_mask_R3(r_idx, a_idx) = true;
+            end
         end
     end
     delta_delay_heatmap_R3 = mean_ts_R3_nopad_hv - mean_ts_R3_nopad_nd;
     % R3 同样裁剪到非负：R3_hv ≥ R3_nd 是物理常态（heavy 跟踪误差不会比 no_delay 小），
     % 偶发负值仅来自小样本的有限方差，与"延迟惩罚"语义无关，裁掉以保证色尺单语义。
+    delta_delay_heatmap_R3(~valid_mask_R3) = NaN;
     delta_delay_heatmap_R3 = max(0, delta_delay_heatmap_R3);
 
-    figure('Name', 'Fig4b_Delay_Penalty_Heatmap_R3');
-    imagesc(1:heatmap_max_round, alpha_range, delta_delay_heatmap_R3');
-    set(gca, 'YDir', 'normal');
-    xlim([0.5, heatmap_max_round + 0.5]);
+    figure('Name', 'Fig4b_Delay_Penalty_Heatmap_R3', 'Color', 'w');
+    ax_h2 = axes;
+    h_im2 = imagesc(ax_h2, 1:heatmap_max_round, alpha_range, delta_delay_heatmap_R3');
+    set(h_im2, 'AlphaData', ~isnan(delta_delay_heatmap_R3'));
+    set(ax_h2, 'YDir', 'normal', 'Color', 'k');
+    xlim(ax_h2, [0.5, heatmap_max_round + 0.5]);
+    xticks(ax_h2, 1:heatmap_max_round);
+    yticks(ax_h2, alpha_range);
     cb = colorbar;
     cb.Label.String = '\DeltaDTE_{inc}^{delay}  (per-round \DeltaR_3, this-round extra NRMSE)';
     xlabel('Cascade Round');
     ylabel('\alpha');
-    title('Delay Penalty Heatmap — per-round \DeltaDTE (\DeltaR_3 = R_3^{heavy}_{round} - R_3^{no\_delay}_{round})');
+    title('Delay Penalty Heatmap — per-round \DeltaDTE (\DeltaR_3 = R_3^{heavy}_{round} - R_3^{no\_delay}_{round}; black = no trials reached)');
     colormap(hot);
 end
 

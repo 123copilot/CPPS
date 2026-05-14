@@ -139,6 +139,16 @@ if ~isempty(opt.YLim)
 end
 ax.YAxis(1).Color = [0.10 0.10 0.10];
 
+% --- 锁定右轴 ylim，使 ΔDTE 柱视觉上始终位于 R3 折线下方 -----------------
+% 与 plotCombinedR1.m 同样的视觉约束：MATLAB 默认右轴自动缩放会让最大柱
+% 占据 ~85% 画布高度，遮住 R3 折线。修复方法：把右轴上限设为左轴上限，
+% 这样柱子高度直接对照左轴 DTE 数值即可读取，且总在 DTE 折线之下。
+% R3 左轴上限是动态的（auto 或 opt.YLim），所以这里在折线绘完之后才取值。
+left_ylim_R3 = ylim(ax);                 % 当前 = 左轴范围
+yyaxis(ax, 'right');
+ylim(ax, [0, max(left_ylim_R3(2), eps)]);% 与左轴上限对齐
+yyaxis(ax, 'left');                      % 还原默认侧，避免后续 xlabel 落到右轴
+
 % --- Common x-axis & cosmetics ------------------------------------------
 xlabel(ax, '\alpha', 'FontSize', 10);
 xlim(ax, [min(xv) - 0.04, max(xv) + 0.04]);
