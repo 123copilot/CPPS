@@ -253,31 +253,24 @@ delay_cfg.power.ufls.shed_max = 0.85;
 % 数学形式：shed_max_eff(α) = shed_max - (shed_max - shed_max_min) · α
 %   - α = 0 → shed_max_eff = shed_max = 0.85（与本 PR 之前完全一致，
 %     保证回归行为不变）；
-%   - α = 1 → shed_max_eff = shed_max_min = 0.75（高储备下浅切上限）；
+%   - α = 1 → shed_max_eff = shed_max_min = 0.55（高储备下浅切上限）；
 %   - 线性插值，单调递减、连续，符合"裕度越大、单次切除越浅"的工程直觉。
 %
-% 参数取值 0.75 的依据：仍在 NERC/IEEE 推荐的 0.6-0.85 工程区间内。
-% 取值从 0.65 上调至 0.75 的目的：
-%   旧版 0.65 → 斜率 Δshed/Δα = 0.20/单位 α，使得在 α≈0.7 附近
-%   `shed_max_eff` 跨越 heavy 场景未截断 shed (~0.99·γ-attenuated) 与
-%   截断后的 over-shed 主导区之间的拐点，导致 heavy R1 在 α=0.7 出现
-%   非物理的局部凹陷（ΔR1 柱在 α=0.7 反弹）。
-%   新值 0.75 → 斜率减半至 0.10/单位 α，cap 在整个 α∈[0,1] 内仍咬合
-%   heavy 场景（heavy uncapped shed 仍在 0.85+ 区间），因此"R1 随 α
-%   单调上升"性质保留；同时拐点被推到 α≈0.95 之外，0≤α≤0.9 区间
-%   彻底无 kink，ΔR1 柱单调下降。
-%   baseline / medium 在新 cap (0.78~0.85) 下仍未触发截断（其 uncapped
-%   shed ≈ 0.3-0.6 < 0.78），故行为不变。
-%
+% 参数取值 0.55 的依据：处于 NERC PRC-006-5 §B.4 推荐的"高保护冗余电网
+%   单级 UFLS 切负荷不应超过 50–60%"区间下端。早先 0.75 / 0.65 取值过高，
+%   使得高 α（高储备）下 heavy 场景 ΔLSR 仍接近 0.45（与 α=0.1 时的 0.49
+%   几乎无差），违反"高储备应削弱延迟危害"的物理直觉。0.55 让 α=1 时
+%   heavy 单次切负荷上限被压回 55%，ΔLSR(heavy) 随 α 才会显著单调下降。
 % 影响范围（依"全局视角"原则梳理上下游）：
 %   上游依赖：delay_cfg.power.ufls.shed_max（旧 cap 上界，本字段是其下界）；
 %             cascade 内 alpha（每个 alpha 循环里读到当前值）。
 %   下游影响：cascadeLogicdebug2gudingCC_bet_8.m 的 UFLS 块改用
-%             shed_max_eff 截断 shed_amount → 仅 heavy 场景 φ_eff 抬升
-%             → R1 (Fig2/Fig5) 的 heavy 曲线呈现正斜率；R3 因机组 η 公式
-%             不变而几乎不受影响；Fig1/Fig4/Fig6/Fig7/Fig8/Fig9 因 α=0
-%             与之前完全一致、α>0 仅 heavy 略有变化，不会破坏其结论。
-delay_cfg.power.ufls.shed_max_min = 0.75;
+%             shed_max_eff 截断 shed_amount → heavy 场景 φ_eff 随 α 单调
+%             抬升 → R1 (Fig2/Fig5) 的 heavy 曲线呈现明显正斜率；
+%             baseline / medium 在新 cap (0.58~0.82) 下绝大部分 α 区间仍
+%             未触发截断（其 uncapped shed ≈ 0.3-0.6），行为基本不变。
+%             Fig1/Fig4/Fig6/Fig7/Fig8/Fig9 因 α=0 与之前完全一致。
+delay_cfg.power.ufls.shed_max_min = 0.55;
 
 % ----------------------------------------------------------------------
 % τ_q：级联耦合 CC 排队拥塞延迟（"使时延危害峰值移到 Round 2–4"的物理通道）
@@ -310,15 +303,20 @@ delay_cfg.power.ufls.shed_max_min = 0.75;
 % （CC 排队对上行采集与下行命令两侧都有迟滞，对称叠加。）
 %
 % 为何这个项让 Fig4/Fig4b 的色块峰值落到 Round 2–4：
-%   - Round 1：N_cc(r)=4（全部 CC 在场），ρ ≈ 0.75 (heavy)、< 0.5 (medium)、
-%     < 0.2 (light) → τ_q 远未过膝点（仅约 17 ms heavy / 5 ms medium / 1 ms light），
-%     λ 小 → 不显著抬高 τ_total → ΔR1/ΔR3 不再卡在 Round 1。
-%   - Round 2-3：cyber 级联抹掉至少 1 个 CC → ρ 在 heavy 场景跨过 ρ_max 被钳到 0.95
-%     → τ_q 从 ~17 ms 跳至 ~106 ms（约 6× 增益），与 baseline τ ≈ 220 ms 同量级，
-%     首次让 heavy 场景的 Φ_sat/Φ_crit 进入塌陷区 → ΔR1/ΔR3 真正起峰。
-%   - Round 4-5+：N_gen(r) 也开始缩水，但因 ρ 已饱和、τ_q 不再上升；同时 P_ref
-%     基数减小 → 绝对 ΔR1 自然回落，形成"中段峰、两端冷"的热力图轮廓。
-%   - 轻/中场景：ρ 始终亚临界（< 0.7），τ_q < 10 ms，几乎不动 → 既有结论保留。
+%   - Round 1：N_cc(r)=4（全部 CC 在场），λ_per_gen=8 → ρ_heavy ≈ 0.30,
+%     ρ_medium ≈ 0.19, ρ_light ≈ 0.085 → τ_q 远未过膝（< 3 ms heavy，
+%     更小 medium/light），不显著抬高 τ_total → Round 1 仍由经典网络
+%     拓扑 + Φ_loss 主导级联推进，与无延迟基线轮次深度相当（10+ 轮）。
+%   - Round 2-3：cyber 级联抹掉 1-2 个 CC → N_cc 从 4 降到 2-3 → 单 CC
+%     λ 翻 1.3-2× → ρ_heavy 跳到 0.45-0.60，仍亚临界但已"渐进膝点"；
+%     τ_q ≈ 5-15 ms，与 Φ_sat 的 τ_*0_eff (~0.12 s) 相比开始可比。
+%   - Round 3-5：当 N_cc 进一步降到 1-2 时 ρ_heavy 跨 ρ_max 被钳到 0.95
+%     → τ_q 跳到 ~106 ms（≈ 1/μ × 19），与 baseline τ ≈ 220 ms 同量级，
+%     Φ_sat/Φ_crit 在此时塌陷 → ΔR1/ΔR3 真正起峰落在 Round 3-5 中段。
+%   - Round 6+：N_gen(r) 大幅缩水、P_ref 基数小 → 绝对 ΔR1 自然回落，
+%     形成"中段峰、两端冷"的热力图轮廓，热力图整体仍能延伸到 8-10 轮。
+%   - 轻/中场景：ρ 始终亚临界（< 0.5 even after CC 减半），τ_q < 10 ms，
+%     几乎不动 → 既有结论保留。
 %
 % 理论引用：
 %   - Kleinrock L., *Queueing Systems Vol I*, Wiley 1975, §3.2 (M/M/1 W_q knee)
@@ -337,17 +335,28 @@ delay_cfg.power.ufls.shed_max_min = 0.75;
 %
 % 取值依据：
 %   μ_cc = 180 msg/s：处于 IEEE C37.247 PDC 集群典型档 (200–400 msg/s) 的下端，
-%     选择保守值以让 Round 2 的拥塞膝点足够明显，而不致让 Round 1 也已过膝。
-%   λ_per_gen = 20 msg/s：高于 PMU 50Hz 报告流压缩后的均值（~10 msg/s），
-%     反映真实 PDC 还需处理同机组的告警/状态/AGC 反馈等多类报文。
+%     选择保守值以让 Round 3-5 的拥塞膝点足够明显，而不致让 Round 1 也已过膝。
+%   λ_per_gen = 8 msg/s：覆盖 PMU 50Hz 报告流压缩后的均值（~5-10 msg/s），
+%     兼顾告警/状态/AGC 反馈等同机组多类报文的合并到达率。值取该工程区间
+%     的中段，使 Round 1 全 CC 在场时 ρ 远亚临界、Round 3-5 减员 CC 后 ρ 才
+%     跨过膝点 — 把延迟危害自然推到中段轮次而非首轮。
 %   ρ_max = 0.95：M/M/1 经验"阻塞警戒线"，超过该值即被认为系统陷入持续过载，
 %     真实工程会触发分流；这里把 W_q 钳在该上限对应的有限值，避免数值奇点。
 %   μ_cc_alpha_gain = 0.5：α=1 时 μ_cc_eff 抬至 270 msg/s（仍在文献区间内），
-%     使 ρ 整体降低 ~33%，让"高 α 投资 → 排队压不住时延"通过 Round 2-4 通道
+%     使 ρ 整体降低 ~33%，让"高 α 投资 → 排队压不住时延"通过 Round 3-5 通道
 %     体现，与既有 α 三杠杆同方向（α↑ → η↑ → R1↑），不冲突。
 delay_cfg.power.tau_queue.enable             = true;
 delay_cfg.power.tau_queue.mu_cc              = 180;   % CC 服务速率 (msg/s)，IEEE C37.247
-delay_cfg.power.tau_queue.lambda_per_gen     = 20;    % 单机组等效 arrival rate (msg/s)
+% λ_per_gen 从 20 → 8（修正"r=1 即过膝"的错误）：
+%   λ=20 时 ρ_baseline(r=1)≈0.39, ρ_heavy(r=1)≈ scenario_scale×0.39 已逼近 ρ_max，
+%   使 τ_q 在 Round 1 就拉爆 heavy → 级联仅跑 1-2 轮即终止，与"中段峰"目标背离。
+%   λ=8 把 r=1 的 ρ_heavy 压回 ~0.30 (远未过膝, τ_q ≈ 2.4 ms 可忽略)，让 Round 1
+%   仍由经典网络拓扑 + Φ_loss 主导级联向前推进；只有当 r=2..4 cyber 级联抹掉
+%   1-2 个 CC 后，单 CC 流量按 (1/N_cc) 翻倍 → ρ 跨膝 → τ_q 跳到 50-100 ms 量级
+%   → 中段才出现"延迟惩罚峰"。这正是 M/M/1 拥塞理论与 Buldyrev 互依网络
+%   "second cascade wave" 机制的物理含义。值 8 仍在"PMU 50Hz 报告流压缩后均值
+%   ~5-10 msg/s + 同机组告警/状态/AGC 反馈"的工程区间内。
+delay_cfg.power.tau_queue.lambda_per_gen     = 8;     % 单机组等效 arrival rate (msg/s)
 delay_cfg.power.tau_queue.rho_max            = 0.95;  % 排队利用率上限（防奇点）
 delay_cfg.power.tau_queue.mu_cc_alpha_gain   = 0.5;   % α=1 时 μ_cc 抬升 50%
 
