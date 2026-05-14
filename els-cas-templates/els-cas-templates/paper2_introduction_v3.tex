@@ -862,12 +862,15 @@ empirical regularity recovered from M/M/1 queueing analysis
 guidance---and the per-path loss accumulates over the
 $n_{\text{hops}}^{(i)}$ hops of the chosen route.
 $\Phi^{\text{crit}}_i$ captures \emph{generator-specific critical
-stability}: a logistic gate with
-$\tau_{\text{crit},i}=\tau_{\text{crit}}^{\max}\cdot r_i$ that
-declines steeply once total delay exceeds a per-machine threshold
-proportional to the generator's relative capacity
-$r_i=P_i^{(0)}/\max_j P_j^{(0)}$, normalised so that
-$\Phi^{\text{crit}}_i(\tau{=}0)=1$.  The capacity-weighted
+stability}: a logistic gate with critical-delay threshold
+$\tau_{\text{crit},i}=\tau_{\text{crit}}^{\max}(\alpha)\cdot r_i$,
+where $r_i=P_i^{(0)}/\max_j P_j^{(0)}$ is the generator's
+relative capacity and the system-level ceiling
+$\tau_{\text{crit}}^{\max}(\alpha)=\tau_{\text{crit}}^{\max,0}+
+g_{\text{crit}}\,\alpha$ widens linearly with the operating reserve
+margin (third $\alpha$-lever, see below).  $\Phi^{\text{crit}}_i$
+declines steeply once the total delay exceeds this threshold and is
+normalised so that $\Phi^{\text{crit}}_i(\tau{=}0)=1$.  The capacity-weighted
 threshold is the model-level expression of the well-known
 asymmetry that small machines have less inertia and tighter
 frequency tolerance windows than large machines
@@ -937,17 +940,25 @@ $\Phi^{\text{loss}}$,
    = \gamma_{\max}\cdot\min\!\Bigl(1,\;\bar\tau/\tau_{\text{ref}}^{\text{UFLS}}\Bigr),
 \end{equation}
 with $\bar\tau$ the mean of $\tau_{m,i}+\tau_{e,i}$ over reachable
-generators.  The shedding factor is then
+generators and $\tau_{\text{ref}}^{\text{UFLS}}$ a UFLS-specific
+reference delay (held distinct from the $\tau_{\text{ref}}$ of
+$\Phi^{\text{loss}}$ because frequency-response margin and packet
+loss saturate at different latency bands; both reference values are
+listed in the implementation parameters of
+Section~\ref{sec:experiment}).  The shedding factor is then
 \begin{equation}\label{eq:phi_eff}
   \Phi^{\text{eff}}
     = \max\!\Bigl(0,\;1-\min\!\bigl(\bar s_{\max}(\alpha),\,
                   (1-\Phi^{\text{glob}})(1+\gamma(\bar\tau))\bigr)\Bigr),
 \end{equation}
-in which the inner clamp $\bar s_{\max}(\alpha)$ is the per-event
-shed cap recommended by NERC~PRC-006-5 (single-event UFLS
-$\le0.85$ for low-reserve operation, narrowed linearly to $0.75$
-at $\alpha=1$ to reflect that high-reserve systems perform
-shallower single-stage shedding).  At zero delay,
+in which the inner clamp is the per-event NERC~PRC-006-5 shed cap,
+linearly narrowed with the operating reserve margin
+\begin{equation}\label{eq:smax_alpha}
+  \bar s_{\max}(\alpha)\;=\;\bar s_{\max}^{0}-\bigl(\bar s_{\max}^{0}-\bar s_{\max}^{1}\bigr)\,\alpha,
+\end{equation}
+with $\bar s_{\max}^{0}=0.85$ (low-reserve single-event cap) and
+$\bar s_{\max}^{1}=0.75$ (high-reserve single-event cap), reflecting
+that high-reserve systems perform shallower single-stage shedding.  At zero delay,
 $\gamma=0$ and Eq.~\eqref{eq:phi_eff} reduces to the conventional
 shed-equal-to-deficit rule.  As delay grows, the same cyber
 mechanism that lowered $\eta_i$ now also forces the system to
@@ -976,8 +987,15 @@ per-round mean wait
                  \frac{\rho_{\text{eff}}(r)}{1-\rho_{\text{eff}}(r)},
 \end{equation}
 with utilisation
-$\rho(r)=\bigl(N_{\text{gen}}(r)\,\lambda_g\,s_{\text{scn}}\bigr)/\bigl(N_{\text{cc}}(r)\,\mu_{\text{cc}}^{\text{eff}}\bigr)$
-and $\rho_{\text{eff}}=\min(\rho,\rho_{\max})$ to enforce the
+$\rho(r)=\bigl(N_{\text{gen}}(r)\,\lambda_g\,s_{\text{scn}}\bigr)/\bigl(N_{\text{cc}}(r)\,\mu_{\text{cc}}^{\text{eff}}\bigr)$,
+where $\lambda_g$ is the per-generator equivalent message arrival rate
+into the PDC (PMU-stream and AGC traffic combined; numerical value
+in Section~\ref{sec:experiment}), $N_{\text{gen}}(r)$ and
+$N_{\text{cc}}(r)$ count the generators in service and the
+control centres surviving at round~$r$, and $g_{\mu}$ in
+$\mu_{\text{cc}}^{\text{eff}}(\alpha)$ is the operating-reserve
+elasticity of PDC service capacity.  We additionally clamp
+$\rho_{\text{eff}}=\min(\rho,\rho_{\max})$ to enforce the
 NERC~PRC-005 engineering ceiling that real PDC clusters offload to
 backup once $\rho>0.95$.  The scenario factor $s_{\text{scn}}$
 inherits the per-scenario scale of Section~\ref{sec:scenarios}, so
