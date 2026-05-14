@@ -55,6 +55,12 @@
 %%      end-of-file comment block for the recommended re-wording.
 %% =====================================================================
 
+% Local macro: render the "no_delay" scenario name in upright \texttt
+% with a properly escaped underscore.  \providecommand keeps this safe
+% if paper2_introduction_v3.tex is ever \input together with
+% paper2_delay_cascade.tex (which defines the same macro at line 19).
+\providecommand{\nodelay}{\texttt{no\_delay}}
+
 \section{Introduction}\label{sec:intro}
 
 The deep integration of physical infrastructure with high-speed
@@ -699,5 +705,419 @@ into a multi-component cyber cascade in Section~\ref{sec:cascade}.
 %%     review) and \citep{Fortunato2010} (community / cohesion in
 %%     networks) must be added to paper2_refs_v2_additions.bib if not
 %%     already present.  All other citations used here are already
+%%     in paper2_refs.bib or paper2_refs_v2_additions.bib.
+%% =====================================================================
+
+
+%% =====================================================================
+%%  SECTION 3 -- Delay-Integrated Cascading Failure Dynamics  (v1)
+%%
+%%  Design notes (kept consistent with the v3 Introduction / Section 2):
+%%   * Single-narrative style; no per-step \paragraph{Step 1}\ldots
+%%     enumerations.  The companion file paper2_delay_cascade.tex
+%%     (lines 410--620) writes the same procedure as a numbered
+%%     four-step recipe; that level of operational detail is
+%%     deliberately suppressed here because (i) the procedure itself
+%%     is standard cascade machinery (\citet{Motter2002,
+%%     Buldyrev2010, Parshani2010}) and (ii) the contribution lies in
+%%     how communication delay enters that machinery as an endogenous
+%%     causal variable, which is what this section foregrounds.
+%%   * Mechanism-specific objects forward-referenced from Section 2
+%%     are introduced here once and only once: the three-factor
+%%     control efficacy $\eta^{+}$ with its three $\alpha$-levers,
+%%     the delay-coupled UFLS over-shedding rule, the
+%%     cascade-induced CC queueing delay $\tau_q$, the five
+%%     severity scenarios, and the resilience metrics $R_1$, $R_3$.
+%%     Numerical values match createDelayConfig.m, computeEtaPlus.m,
+%%     createDelayScenarioConfigs.m and cascadeLogicdebug2gudingCC_bet_8.m
+%%     of the present implementation.
+%% =====================================================================
+\section{Delay-Integrated Cascading Failure Dynamics}\label{sec:cascade}
+
+In a conventional cascade model every generator delivers its full
+scheduled output regardless of communication quality, so the cyber
+state of $G_C$ enters the calculation only as a binary mask
+(``which generators are reachable?'') after the electrical
+redistribution has been computed.  We instead treat the cyber state
+as an endogenous causal variable: at every cascade round, the
+surviving cyber graph determines a per-generator delay, the delay
+determines a per-generator control efficacy, the efficacy scales the
+generator injection \emph{before} the DC power flow, and the
+resulting branch flows determine which physical and cyber components
+fail next.  The same map $A_{pc}$ that defined the interlayer
+coupling in Section~\ref{sec:coupling} is therefore reused as the
+control-loop carrier; communication delay is no longer a post-hoc
+diagnostic of an already-completed cascade but a closed-loop driver
+of the cascade trajectory itself
+\citep{Buldyrev2010,Parshani2010,Cai2016TSG}.  The remainder of this
+section makes this loop concrete in five steps---initial disturbance
+and dual-loop iteration (Section~\ref{sec:cascade_loop}), the
+delay-aware dispatch through the $\eta^{+}$ function
+(Section~\ref{sec:delay_dispatch}), the delay-coupled UFLS rule
+(Section~\ref{sec:ufls}), the cascade-induced CC queueing delay
+(Section~\ref{sec:tauq}), the five severity scenarios used in the
+experiments (Section~\ref{sec:scenarios})---and closes with the two
+resilience metrics through which the loop is observed
+(Section~\ref{sec:metrics}).
+
+%% ---- 3.1 Attack and dual-loop architecture --------------------------
+\subsection{Initial disturbance and dual-loop iteration}\label{sec:cascade_loop}
+
+Each simulation is initialised by a betweenness-targeted attack on the
+cyber layer: the single non-CC node with the highest initial node
+betweenness in $G_C$ is removed.  Targeting a high-betweenness relay
+maximises the immediate disruption to communication paths, lengthens
+many delay-weighted shortest paths from generators to control centres,
+and---if the attacked node lies on the only path between a CC and a
+sub-region---may fragment $G_C$ into reachable and unreachable
+components in a single shot \citep{Albert2000,Pagani2013}.  All
+subsequent failures are produced endogenously by the cascade, not by
+exogenous removals; the targeted attack therefore plays the role of
+the seed disturbance studied in classical cascade analyses
+\citep{Motter2002,Dobson2007}.
+
+The cascade itself iterates a nested dual-loop architecture.  The
+\emph{inner loop} resolves structural propagation between the two
+layers: it identifies and removes any cyber component that lacks a
+surviving control centre (the Functional Viability-Constrained Island
+Detection mechanism FVC-ID introduced in our prior work
+\citep{ChenTu2026}), propagates failures between $V_C$ and $V_P$ via
+the coupling map $A_{pc}$ with probability~$p$, and removes any power
+component that has lost both generation and load.  The inner loop
+runs to a fixed point.  The \emph{outer loop} then performs one
+overload sweep on the resulting surviving network: cyber-side
+betweenness is recomputed and components whose updated load exceeds
+their frozen capacity (Eqs.~\eqref{eq:cap_Cn}--\eqref{eq:cap_Ce}) are
+tripped; on the power side the delay-aware dispatch of
+Section~\ref{sec:delay_dispatch} sets every surviving generator's
+output to $\eta_i\,P_i^{(0)}$, the under-frequency rule of
+Section~\ref{sec:ufls} rebalances load against the resulting
+generation, a DC power flow is solved on the surviving topology, and
+any branch with $|P_e|>C_e^{P}$ from Eq.~\eqref{eq:cap_P} is
+tripped.  Newly failed components are returned to the inner loop and
+the procedure repeats until no further failures occur.  This is the
+same dual-loop skeleton used by \citet{Cai2016TSG} and
+\citet{Parshani2010}; the architectural innovation is purely the
+delay-aware generator scaling that takes place \emph{between} the
+inner-loop fixed point and the DC power flow.
+
+%% ---- 3.2 Delay-aware generator dispatch -----------------------------
+\subsection{Delay-aware generator dispatch through
+\texorpdfstring{$\eta^{+}$}{eta+}}\label{sec:delay_dispatch}
+
+For every generator $i$ that survives the inner loop, the framework
+first locates its cyber image $\pi_i\in V_C$ via $A_{pc}$ and then
+solves a delay-weighted shortest-path problem from $\pi_i$ to the
+nearest surviving control centre on the residual cyber graph,
+weighting each edge by the link delay
+$T_{\text{link}}(u,v)$ of Section~\ref{sec:cyber}.  Generators whose
+cyber image is disconnected from every surviving CC are declared
+\emph{unreachable}: they receive no measurement uplink and no
+dispatch downlink, and their injection is set to zero before the DC
+power flow, which is the most severe single-step consequence of
+cyber-layer fragmentation.  All remaining generators receive a
+measurement delay
+\begin{equation}\label{eq:tau_m_v3}
+  \tau_{m,i}=\tau_{\text{PB}\to\text{nonCC}}
+              +T_{\text{up}}(\pi_i)+\tau_q(r),
+\end{equation}
+and an execution delay
+\begin{equation}\label{eq:tau_e_v3}
+  \tau_{e,i}=\tau_{\text{nonCC}\to\text{PB}}
+              +T_{\text{down}}(\pi_i)+\tau_q(r),
+\end{equation}
+where $T_{\text{up}}/T_{\text{down}}$ are the four-component
+end-to-end path delays defined in Eqs.~\eqref{eq:Tup}--\eqref{eq:Tdown},
+$\tau_{\text{PB}\to\text{nonCC}}$ and $\tau_{\text{nonCC}\to\text{PB}}$
+are the field-side measurement and execution interface delays of
+Section~\ref{sec:coupling}, and $\tau_q(r)$ is the cascade-induced
+control-centre queueing delay defined in Section~\ref{sec:tauq}.
+
+The two delays $\tau_{m,i},\tau_{e,i}$ are converted to a per-generator
+control efficacy $\eta_i\in[0,1]$ through the three-factor function
+$\eta^{+}$:
+\begin{equation}\label{eq:etaplus}
+  \eta_i \;=\; \Phi^{\text{sat}}_i \cdot \Phi^{\text{loss}}_i \cdot
+               \Phi^{\text{crit}}_i .
+\end{equation}
+The three factors decompose the influence of delay along three
+qualitatively distinct physical channels.  $\Phi^{\text{sat}}_i$
+captures \emph{control-loop saturation}: it is unity inside an
+engineering dead-band $(\tau_{m0},\tau_{e0})$---typical of the
+PMU reporting interval permitted by IEEE~C37.118.1
+\citep{IEEE_C37_118_2} and of governor / AVR action dead-bands---and
+decays exponentially once the dead-band is exceeded,
+\begin{equation}\label{eq:phi_sat}
+  \Phi^{\text{sat}}_i = \exp\!\bigl[
+       -a_m\,(\tau_{m,i}-\tau_{m0})^{+}
+       -a_e\,(\tau_{e,i}-\tau_{e0})^{+}
+     \bigr],
+\end{equation}
+with $(x)^{+}=\max(0,x)$.  $\Phi^{\text{loss}}_i$ captures
+\emph{cyber-path packet loss}: each hop has an effective drop
+probability $p_h^{\text{eff}}=p_h\cdot\min(1,(\tau_{m,i}+\tau_{e,i})/\tau_{\text{ref}})$
+that grows monotonically with end-to-end delay---an
+empirical regularity recovered from M/M/1 queueing analysis
+\citep{Kleinrock1975} and reflected in ITU-T~G.1010 traffic-class
+guidance---and the per-path loss accumulates over the
+$n_{\text{hops}}^{(i)}$ hops of the chosen route.
+$\Phi^{\text{crit}}_i$ captures \emph{generator-specific critical
+stability}: a logistic gate with critical-delay threshold
+$\tau_{\text{crit},i}=\tau_{\text{crit}}^{\max}(\alpha)\cdot r_i$,
+where $r_i=P_i^{(0)}/\max_j P_j^{(0)}$ is the generator's
+relative capacity and the system-level ceiling
+$\tau_{\text{crit}}^{\max}(\alpha)=\tau_{\text{crit}}^{\max,0}+
+g_{\text{crit}}\,\alpha$ widens linearly with the operating reserve
+margin (third $\alpha$-lever, see below).  $\Phi^{\text{crit}}_i$
+declines steeply once the total delay exceeds this threshold and is
+normalised so that $\Phi^{\text{crit}}_i(\tau{=}0)=1$.  The capacity-weighted
+threshold is the model-level expression of the well-known
+asymmetry that small machines have less inertia and tighter
+frequency tolerance windows than large machines
+\citep{Kundur2017CPPS}.  Because the three factors act on
+qualitatively independent channels, every reachable generator at
+zero delay satisfies $\Phi^{\text{sat}}_i=\Phi^{\text{loss}}_i=
+\Phi^{\text{crit}}_i=1$ and hence $\eta_i=1$, so the
+\nodelay{} scenario of Section~\ref{sec:scenarios} is a strict
+upper bound on every realisation of the cascade.
+
+The single tolerance parameter $\alpha$ from
+Section~\ref{sec:capacity} enters $\eta^{+}$ along three
+parallel levers that reflect the engineering reality that a
+better-resourced grid can also afford a better-resourced
+control loop.  First, $\Phi^{\text{loss}}_i$ is replaced by its
+$k$-fold parallel-redundancy reliability with
+$k_{\text{eff}}(\alpha)=1+\alpha\,(k_{\max}-1)$, mapping
+$\alpha$ to the equivalent number of independent CC$\leftrightarrow$gen
+channels (IEEE~Std~493 / IEC~61850 PRP / NERC~CIP-012
+\citep{NERC_CIP012,IEC_61850_PRP}); second, $\tau_{m0},\tau_{e0}$
+in Eq.~\eqref{eq:phi_sat} are widened linearly in~$\alpha$, mirroring
+the C37.118 PMU and IEC~60255-181 UFLS dead-band relaxation that
+high-reserve systems can adopt without loss of compliance; third,
+$\tau_{\text{crit}}^{\max}$ is widened linearly in~$\alpha$ to
+reflect the wider frequency-response tolerance windows admitted by
+NERC~PRC-006-5 \citep{NERC_PRC006} and the NASPI WAMS
+implementation guidance \citep{NASPI_LatencyGuidelines} for systems
+with deep operating reserves.  All three levers degenerate cleanly
+at $\alpha=0$, so the single-tolerance interpretation of
+Section~\ref{sec:capacity} remains intact.  The output of this
+subsection is the scaled injection
+\begin{equation}\label{eq:Pactual_v3}
+  P_i^{\text{actual}} \;=\; \eta_i \cdot P_i^{(0)},
+\end{equation}
+which replaces $P_i^{(0)}$ in the DC power flow of the outer
+loop and is the single point at which communication delay alters
+the electrical state of $G_P$.
+
+%% ---- 3.3 Delay-coupled UFLS over-shedding ---------------------------
+\subsection{Delay-coupled under-frequency load shedding}\label{sec:ufls}
+
+The injection scaling of Eq.~\eqref{eq:Pactual_v3} produces, in
+general, a per-round generation deficit
+$\Phi^{\text{glob}}=\sum_i P_i^{\text{actual}}/\sum_i P_i^{(0)}\le 1$
+that the DC power flow alone would close by drawing the missing
+power from the slack bus.  This numerical artefact would route the
+deficit through paths that bear no relation to the physical response
+of a real grid, in which insufficient generation triggers an
+under-frequency event answered by the load-shedding (UFLS) schemes
+mandated by NERC~PRC-006-5 \citep{NERC_PRC006},
+IEEE~Std~C37.117 and IEC~60255-181.  We therefore close the
+power balance physically rather than numerically: every load bus is
+scaled by an effective shedding factor $\Phi^{\text{eff}}$ before
+the DC power flow is solved, so that the post-shed total load
+matches the post-$\eta$ generation.
+
+Communication delay enters this rule because the UFLS scheme itself
+relies on the same cyber channels: the frequency measurement is
+delayed, the trip command is delayed, and standard practice
+(IEEE~Std~C37.117, NERC~PRC-006) recommends a 20--50\%
+\emph{over-shedding margin} to compensate for the resulting
+under-estimation of the actual frequency dip.  We model this margin
+as a normalised function of the same end-to-end delay as
+$\Phi^{\text{loss}}$,
+\begin{equation}\label{eq:gamma_ufls}
+  \gamma(\bar\tau)
+   = \gamma_{\max}\cdot\min\!\Bigl(1,\;\bar\tau/\tau_{\text{ref}}^{\text{UFLS}}\Bigr),
+\end{equation}
+with $\bar\tau$ the mean of $\tau_{m,i}+\tau_{e,i}$ over reachable
+generators and $\tau_{\text{ref}}^{\text{UFLS}}$ a UFLS-specific
+reference delay (held distinct from the $\tau_{\text{ref}}$ of
+$\Phi^{\text{loss}}$ because frequency-response margin and packet
+loss saturate at different latency bands; both reference values are
+listed in the implementation parameters of
+Section~\ref{sec:experiment}).  The shedding factor is then
+\begin{equation}\label{eq:phi_eff}
+  \Phi^{\text{eff}}
+    = \max\!\Bigl(0,\;1-\min\!\bigl(\bar s_{\max}(\alpha),\,
+                  (1-\Phi^{\text{glob}})(1+\gamma(\bar\tau))\bigr)\Bigr),
+\end{equation}
+in which the inner clamp is the per-event NERC~PRC-006-5 shed cap,
+linearly narrowed with the operating reserve margin
+\begin{equation}\label{eq:smax_alpha}
+  \bar s_{\max}(\alpha)\;=\;\bar s_{\max}^{0}-\bigl(\bar s_{\max}^{0}-\bar s_{\max}^{1}\bigr)\,\alpha,
+\end{equation}
+with $\bar s_{\max}^{0}=0.85$ (low-reserve single-event cap) and
+$\bar s_{\max}^{1}=0.75$ (high-reserve single-event cap), reflecting
+that high-reserve systems perform shallower single-stage shedding.  At zero delay,
+$\gamma=0$ and Eq.~\eqref{eq:phi_eff} reduces to the conventional
+shed-equal-to-deficit rule.  As delay grows, the same cyber
+mechanism that lowered $\eta_i$ now also forces the system to
+shed more load than the instantaneous deficit would justify; this
+makes load shedding a second, structurally distinct channel through
+which delay degrades $R_1$, complementary to the generator scaling
+of Section~\ref{sec:delay_dispatch}.
+
+%% ---- 3.4 Cascade-induced CC queueing delay --------------------------
+\subsection{Cascade-induced control-centre queueing delay}\label{sec:tauq}
+
+The end-to-end path delays $T_{\text{up}},T_{\text{down}}$ in
+Section~\ref{sec:cyber} were defined for an unloaded network.  When
+the cascade has removed one or more control centres, the surviving
+CCs must absorb the full measurement and dispatch traffic of the
+generators that remain in service, and finite-capacity queueing
+inside each PDC begins to dominate the latency budget.  Following
+\citet{Kleinrock1975} and the PDC service-rate envelope reported
+by IEEE~C37.247 / NASPI WAMS implementation guidance
+\citep{NASPI_LatencyGuidelines}, we model each surviving CC as an
+M/M/1 server with service rate $\mu_{\text{cc}}^{\text{eff}}(\alpha)
+=\mu_{\text{cc}}\bigl(1+g_{\mu}\,\alpha\bigr)$ and obtain a
+per-round mean wait
+\begin{equation}\label{eq:tauq}
+  \tau_q(r) \;=\; \frac{1}{\mu_{\text{cc}}^{\text{eff}}(\alpha)}\cdot
+                 \frac{\rho_{\text{eff}}(r)}{1-\rho_{\text{eff}}(r)},
+\end{equation}
+with utilisation
+$\rho(r)=\bigl(N_{\text{gen}}(r)\,\lambda_g\,s_{\text{scn}}\bigr)/\bigl(N_{\text{cc}}(r)\,\mu_{\text{cc}}^{\text{eff}}\bigr)$,
+where $\lambda_g$ is the per-generator equivalent message arrival rate
+into the PDC (PMU-stream and AGC traffic combined; numerical value
+in Section~\ref{sec:experiment}), $N_{\text{gen}}(r)$ and
+$N_{\text{cc}}(r)$ count the generators in service and the
+control centres surviving at round~$r$, and $g_{\mu}$ in
+$\mu_{\text{cc}}^{\text{eff}}(\alpha)$ is the operating-reserve
+elasticity of PDC service capacity.  We additionally clamp
+$\rho_{\text{eff}}=\min(\rho,\rho_{\max})$ to enforce the
+NERC~PRC-005 engineering ceiling that real PDC clusters offload to
+backup once $\rho>0.95$.  The scenario factor $s_{\text{scn}}$
+inherits the per-scenario scale of Section~\ref{sec:scenarios}, so
+that $\tau_q$ vanishes identically in the \nodelay{} scenario.
+$\tau_q(r)$ is symmetrically added to both $\tau_{m,i}$ and
+$\tau_{e,i}$ in Eqs.~\eqref{eq:tau_m_v3}--\eqref{eq:tau_e_v3} and
+therefore propagates back into $\eta^{+}$.  Conceptually, this
+closes a second feedback path: cyber failures shrink the CC
+service capacity, which raises queueing delay, which lowers
+$\eta^{+}$, which reroutes more load through under-frequency
+shedding and triggers further failures.
+
+%% ---- 3.5 Five severity scenarios ------------------------------------
+\subsection{Delay severity scenarios}\label{sec:scenarios}
+
+The five delay severity scenarios used throughout
+Section~\ref{sec:experiment} are defined by coherently rescaling a
+single baseline parameter set (Table~\ref{tbl:scenarios_v3}).  The
+scale factor $s$ multiplies the uplink and downlink packet sizes,
+the link distance, every service-delay component
+$\tau_{\text{tx}},\tau_{\text{rx}},\tau_{\text{fwd}}$, and both
+field-side interface delays
+$\tau_{\text{PB}\to\text{nonCC}},\tau_{\text{nonCC}\to\text{PB}}$,
+while the link rate~$R$, the propagation speed~$V$, and the
+sensitivity coefficients $a_m,a_e$ inside $\eta^{+}$ remain fixed.
+This is an engineering-motivated stress family, not a literal
+geometric rescaling: the five scales are anchored to documented
+WAMS / IEC / NERC operating bands so that each scenario maps to a
+realistic operating regime rather than to an arbitrary point on a
+continuous sweep.
+
+\begin{table}[t]
+\caption{Delay severity scenarios.  Total measurement-plus-execution
+delay $\tau_{\text{tot}}=\tau_{m,i}+\tau_{e,i}$ at the cyber-path
+component evaluated on the unattacked network; the three central
+scales are anchored to the IEEE~C37.118 PMU reporting band
+\citep{IEEE_C37_118_2}, the IEC~61850-90-5 inter-area class-M2/M3
+band, the NASPI cross-region P95 measurement
+\citep{NASPI_LatencyGuidelines} and the NERC~PRC-002-2 upper
+bound \citep{NERC_PRC002} respectively.}\label{tbl:scenarios_v3}
+\centering
+\begin{tabular}{@{}lccl@{}}
+\toprule
+Scenario & $s$ & $\tau_{\text{tot}}$ (ms) & Operating regime \\
+\midrule
+\nodelay{} & 0.0 &   0 & ideal-channel reference \\
+light      & 0.5 & 110 & local-area WAMS, IEEE~C37.118 PMU stream \\
+baseline   & 1.0 & 220 & inter-area WAMS, IEC~61850-90-5 M2/M3 \\
+medium     & 1.7 & 374 & NASPI cross-region P95 measurement band \\
+heavy      & 2.7 & 594 & WAN-congested, $\sim$60\% of NERC PRC-002-2 cap \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The \nodelay{} scenario plays a structural role beyond that of a
+reference point.  Because $s=0$ zeroes every delay-producing
+parameter and the scenario factor $s_{\text{scn}}$ in
+Eq.~\eqref{eq:tauq}, every reachable generator satisfies
+$\tau_{m,i}=\tau_{e,i}=\tau_q=0$, hence
+$\eta_i=1$, hence $\Phi^{\text{glob}}=1$ and
+$\Phi^{\text{eff}}=1$, so the cascade reduces exactly to the
+classical capacity--tolerance model of \citet{Motter2002} on the
+same coupled topology.  Any difference between
+\nodelay{} and the four delay-active scenarios at the same
+$(\alpha,\text{trial})$ is therefore causally attributable to
+communication delay and to the closed-loop interactions it induces.
+
+%% ---- 3.6 Resilience metrics -----------------------------------------
+\subsection{Resilience metrics}\label{sec:metrics}
+
+Two complementary metrics are extracted at the terminal cascade
+state of every $(\alpha,\text{scenario},\text{trial})$ realisation.
+Load retention,
+\begin{equation}\label{eq:R1_v3}
+  R_1
+  \;=\; \frac{\sum_{b\in V_P^{\text{surv}}}\Phi^{\text{eff}}\,P_b^{(0)}}
+             {\sum_{b\in V_P}P_b^{(0)}},
+\end{equation}
+measures the fraction of pre-attack load that remains served once
+the cascade has terminated and after the delay-coupled UFLS rule of
+Eq.~\eqref{eq:phi_eff} has been applied.  $R_1$ aggregates every
+upstream effect of delay---reduced $\eta_i$, deeper UFLS shedding,
+additional overload tripping---into a single bus-weighted survival
+ratio.  Dispatch fidelity,
+\begin{equation}\label{eq:R3_v3}
+  R_3
+  \;=\; \sqrt{\frac{\sum_{j\in V_G^{\text{surv}}}P_j^{(0)}\,
+            \bigl(P_j^{\text{actual}}-P_j^{(0)}\bigr)^{2}/{P_j^{(0)}}^{2}}
+                {\sum_{j\in V_G^{\text{surv}}}P_j^{(0)}}},
+\end{equation}
+is a capacity-weighted normalised RMS of the relative deviation
+between each surviving generator's delay-degraded output and its
+reference dispatch; unreachable generators contribute the maximum
+relative deviation of unity.  $R_3$ measures a quality of operation
+that aggregate load retention cannot expose: a system can hold
+$R_1$ near unity while leaking control authority through the
+$\eta^{+}$ channel, and that hidden degradation surfaces only in
+$R_3$.  In the language of recent CPPS resilience taxonomies
+\citep{Panteli2015,Bie2017}, $R_1$ is a quantitative survivability
+indicator and $R_3$ is a qualitative controllability indicator;
+together they bracket the two failure modes through which
+communication delay damages a coupled cyber-physical grid, and
+they are the two observables on which Section~\ref{sec:experiment}
+evaluates every claim made in this paper.
+
+%% =====================================================================
+%%  END SECTION 3 v1
+%%
+%%  Compilation notes:
+%%   * The macro \nodelay{} (rendering "no\_delay" in upright \texttt)
+%%     is defined via \providecommand near the top of this file so the
+%%     section compiles standalone; if paper2_introduction_v3.tex is
+%%     later \input together with paper2_delay_cascade.tex (line 19),
+%%     the \providecommand will defer to the existing definition.
+%%   * Eq. labels eq:Tup, eq:Tdown, eq:cap_P, eq:cap_Cn, eq:cap_Ce
+%%     are defined in Section 2 of this same file; do not redefine.
+%%   * The reference \citep{Kleinrock1975} (M/M/1 queueing) and
+%%     \citep{IEC_61850_PRP} (PRP redundancy) must be present in
+%%     paper2_refs_v2_additions.bib.  The remaining citations
+%%     (ChenTu2026, Motter2002, Buldyrev2010, Parshani2010,
+%%     Cai2016TSG, Albert2000, Pagani2013, Dobson2007, Kundur2017CPPS,
+%%     IEEE_C37_118_2, NERC_PRC002, NERC_PRC006, NERC_CIP012,
+%%     NASPI_LatencyGuidelines, Panteli2015, Bie2017) are already
 %%     in paper2_refs.bib or paper2_refs_v2_additions.bib.
 %% =====================================================================
