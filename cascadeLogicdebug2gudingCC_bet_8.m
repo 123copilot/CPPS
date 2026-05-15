@@ -554,6 +554,45 @@ parfor idxAlpha = 1:numA
             end
             delay_injection_log.tau_queue = tau_queue_log;
 
+            % --- 控制器响应时间常数 W(r)：通道延迟有效幅度的轮次包络 ---
+            % 物理依据与公式见 createDelayConfig.m 的 round_envelope 注释块。
+            % 关键性质：W(1)=W_min<1 → r=1 通道延迟伤害打折，使 cascade 不
+            %   一击致命；W(r≥r_peak)=1 → 中段保持满量级时延 → 与 τ_q(r)
+            %   叠加将伤害峰值推到 Round 2-5。
+            % 不调制 τ_q（排队为被动等待，不属于控制器主动响应）；
+            % 不调制 Φ_loss 拓扑（事件率与控制器响应无关）。
+            W_round = 1;
+            round_env_log = struct('enable', false, 'W_round', 1, ...
+                'W_min', 1, 'r_peak', 1, 'round_index', main_iteration_count);
+            if isfield(delay_cfg.power, 'round_envelope') && ...
+                    isfield(delay_cfg.power.round_envelope, 'enable') && ...
+                    delay_cfg.power.round_envelope.enable
+                re_cfg = delay_cfg.power.round_envelope;
+                if isfield(re_cfg, 'W_min') && ~isempty(re_cfg.W_min)
+                    W_min_local = max(0, min(1, re_cfg.W_min));
+                else
+                    W_min_local = 1;
+                end
+                if isfield(re_cfg, 'r_peak') && ~isempty(re_cfg.r_peak)
+                    r_peak_local = max(1, round(re_cfg.r_peak));
+                else
+                    r_peak_local = 1;
+                end
+                r_now = max(1, main_iteration_count);
+                if r_peak_local <= 1 || r_now >= r_peak_local
+                    W_round = 1;
+                else
+                    W_round = W_min_local + ...
+                        (1 - W_min_local) * (r_now - 1) / (r_peak_local - 1);
+                end
+                W_round = max(0, min(1, W_round));
+                round_env_log.enable      = true;
+                round_env_log.W_round     = W_round;
+                round_env_log.W_min       = W_min_local;
+                round_env_log.r_peak      = r_peak_local;
+            end
+            delay_injection_log.round_envelope = round_env_log;
+
             for gIdx = 1:size(mpc_sur.gen, 1)
                 if gen_status_vec(gIdx) <= 0
                     continue;  % 已离线的发电机跳过
@@ -607,6 +646,13 @@ parfor idxAlpha = 1:numA
 
                     tau_m_g = delay_cfg.power.pb_to_noncc_measurement_delay_s + cyber_up_d;
                     tau_e_g = delay_cfg.power.noncc_to_pb_execution_delay_s + cyber_down_d;
+
+                    % --- W(r) 包络：仅调制"非队列、非拓扑"的通道延迟分量 ---
+                    % τ_q 表示 CC 排队被动等待，不属于控制器主动响应过程，
+                    % 因此在 W 调制之后再叠加（确保 τ_q 始终按全量计入）。
+                    % W=1 时数学上等价于 (baseline + cyber) + τ_q（旧路径）。
+                    tau_m_g = tau_m_g * W_round;
+                    tau_e_g = tau_e_g * W_round;
 
                     % 叠加级联耦合 CC 排队延迟 τ_q(r)（per-round 标量，对所有机组同值；
                     % 上行/下行均经过 surviving CC，故对称叠加到 τ_m 和 τ_e）。
