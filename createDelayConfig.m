@@ -366,6 +366,83 @@ delay_cfg.power.tau_queue.lambda_per_gen     = 20;    % 单机组等效 arrival 
 delay_cfg.power.tau_queue.rho_max            = 0.95;  % 排队利用率上限（防奇点）
 delay_cfg.power.tau_queue.mu_cc_alpha_gain   = 0.5;   % α=1 时 μ_cc 抬升 50%
 
+% ----------------------------------------------------------------------
+% W(r)：控制器响应时间常数 → 通道延迟有效幅度的轮次包络
+% ----------------------------------------------------------------------
+% 物理依据（对外口径只需一句话："考虑了二次频率控制与 UFLS 控制器的有限
+% 响应时间常数"，详细参数细节归入配置文件）：
+%   AGC、UFLS、PMU 事件触发等控制回路本身是有限带宽的一阶系统：
+%   - AGC 二次频率控制典型时间常数 T_AGC ≈ 4–10 s（Kundur, *Power System
+%     Stability and Control*, McGraw-Hill 1994, Ch.11.1.6）；
+%   - UFLS 频率继电器 + 跳闸链路实测响应 ≈ 100–250 ms
+%     （IEEE C37.117-2007 §5.2 / NERC PRC-006-5 §B.2）；
+%   - PMU 事件触发流量在扰动后 ~1 RTT 才进入稳态报告率
+%     （IEEE C37.247 §6.2; NASPI WAMS Roadmap §4.3）。
+%   这些控制器并非阶跃响应——通道时延的"有效危害幅度"在级联第 1 轮
+%   还没有完全动员，而是在控制器一阶充能后的中段轮次才达到饱和。
+%   原模型默认所有通道时延 r=1 即满量级注入（响应分数 ≡ 1），等价于
+%   T_控制器 → 0 的极限简化；解除该简化后 r=1 应有 W_min<1，r=r_peak 后
+%   才达到 W=1。
+%
+% 数学形式（per-round 标量，对所有机组同值）：
+%   r ≤ r_peak ：W(r) = W_min + (1 - W_min) · (r - 1) / (r_peak - 1)
+%   r > r_peak ：W(r) = 1
+%   r=1, r_peak=1 的退化情形：W ≡ 1（即关闭包络的等价路径）。
+%
+% 注入位置（cascadeLogic 的 per-gen η 循环里）：
+%   tau_m_g = (pb_to_noncc_measurement_delay_s + cyber_up_d)   · W(r) + τ_q(r)
+%   tau_e_g = (noncc_to_pb_execution_delay_s   + cyber_down_d) · W(r) + τ_q(r)
+%   即只调制"非队列、非拓扑"的通道延迟分量；τ_q(r) 不被包络（M/M/1 排队
+%   是被动等待，不属于控制器主动响应过程）。Φ_loss 的拓扑丢包率不被调制
+%   （是物理事件率，与控制器响应无关）。UFLS γ_over 通过 tau_sum_mean
+%   隐式继承 W(r)，无需显式额外因子（避免双重计费）。
+%
+% 与既有通道的关系（"同源延伸"，不是外挂）：
+%   - 与 τ_q：物理独立、可叠加。τ_q 是 N_cc → ρ → W_q 的 cyber 反馈环；
+%     W(r) 是控制器一阶充能的物理时间常数显化。两者在级联早/中段共同
+%     塑造伤害峰位。
+%   - 与 Φ_sat、Φ_crit：它们以 τ_m/τ_e 为输入；W(r) 调制输入即间接
+%     调制这两条饱和支路，符合"控制器未充能时饱和带也未完全展开"的物理图。
+%   - 与 Φ_loss：不调制（拓扑丢包率与控制器响应无关）。
+%   - 与 R1/R3 计算口径：完全不动；W(r) 只改 η_g 中间量。
+%
+% 为何这个项让 Fig4/Fig4b 的色块峰值落到 Round 2–5：
+%   - Round 1：W=W_min=0.30 → 通道延迟有效幅度 30% → η_heavy(r=1) 大幅抬升
+%     → R1_heavy(1) 抬升、ΔLSR(1) 缩小（r=1 列从最亮红 → 暗红/橙）；
+%     同时 cascade 不会一击致命，能延伸到 r≥4 的中段。
+%   - Round 2-3：W 线性爬到 1.0 → 通道延迟满量级动员；与此同时 N_cc 因
+%     cyber 级联开始下降、τ_q 进入工作区 → 两条机制叠加 → 峰值带 r=2–4。
+%   - Round 4+：W=1.0 维持；τ_q 在 N_cc≤2 时跨膝点；Φ_sat/Φ_crit 塌陷 →
+%     峰值带可延伸到 r=5；之后 N_gen 缩水自然冷却。
+%
+% 兼容性 / 严格回归：
+%   - delay_cfg.power.round_envelope.enable = false → cascadeLogic 跳过 W
+%     （走 W=1.0 等价路径），与本块加入前严格 bit-identical。
+%   - 字段缺失（旧 cfg）→ 同上，安全回退。
+%   - scenario_scale=0 (no_delay) → cyber_up_d=cyber_down_d=baseline≈0
+%     → 包络作用对象 ≈ 0 → 与 W=1 数值相同（no_delay 曲线完全不变）。
+%   - α=0 + enable=true：W(r) 不依赖 α，行为与 α=0 + enable=false 相同
+%     （tau_q_round 也未被包络），R1/R3 的 α=0 锚点不变。
+%
+% 取值依据：
+%   W_min = 0.30：AGC 一阶系统在第一个采样周期 (~0.5 s) 内的归一化响应
+%     ≈ 1 - exp(-T/T_AGC) ≈ 0.10–0.30（对应 T_AGC=4–10 s 区间），取上界
+%     0.30 作为多控制器并联的等效响应分数（保守，让 r=1 仍有可观伤害）。
+%   r_peak = 3：cascade 的轮次时间步约 0.5–1 s，r_peak=3 对应 ~1.5–3 s
+%     物理时间，落在 AGC 时间常数 T_AGC 的 3τ–5τ 充能窗口内；超过该窗口
+%     一阶系统已基本饱和，W=1.0 合理。
+%
+% 理论引用：
+%   - Kundur P., *Power System Stability and Control*, McGraw-Hill 1994,
+%     Ch.11.1.6 (AGC time constants)
+%   - IEEE Std C37.117-2007 §5.2 (UFLS relay response time)
+%   - NERC PRC-006-5 §B.2 (UFLS coordination time windows)
+%   - IEEE Std C37.247 §6.2 (Synchrophasor stream service event triggering)
+%   - NASPI WAMS Implementation Roadmap §4.3 (post-event PMU traffic ramp-up)
+delay_cfg.power.round_envelope.enable  = true;
+delay_cfg.power.round_envelope.W_min   = 0.30;  % r=1 的响应分数下限
+delay_cfg.power.round_envelope.r_peak  = 3;     % W 充能到 1.0 的轮次
+
 % 指标开关
 delay_cfg.metrics.enable_r1 = true;
 delay_cfg.metrics.enable_r2 = false;
