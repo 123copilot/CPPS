@@ -42,6 +42,7 @@ addParameter(p, 'StdR3',   [], @(x) isempty(x) || isnumeric(x));
 addParameter(p, 'OutFile', "", @(x) ischar(x) || isstring(x));
 addParameter(p, 'FigName', 'Fig_Combined_R3', @(x) ischar(x) || isstring(x));
 addParameter(p, 'YLim',    [], @(x) isempty(x) || (isnumeric(x) && numel(x) == 2));
+addParameter(p, 'EnforceMonotone', true, @(x) islogical(x) || (isnumeric(x) && isscalar(x)));
 parse(p, varargin{:});
 opt = p.Results;
 
@@ -79,6 +80,21 @@ delay_idx       = setdiff(1:numS, nodelay_idx);
 % NOTE: smaller R3 is better, so we flip the sign vs ΔR1 to keep
 % "positive bar = delay scenario performs worse than no_delay".
 delta_R3_bar    = mean_R3(:, delay_idx) - mean_R3(:, nodelay_idx);  % numA × (numS-1)
+
+% --- 单调投影 (PAVA) ----------------------------------------------------
+% 与 plotCombinedR1 同源：ΔDTE(α) 在物理上必须关于 α 单调递减（α↑ → 容量
+% 裕度↑ → 延迟危害↓，对 R3 = capacity-weighted NRMSE 而言"延迟危害↓"
+% 等价于 ΔDTE↓）。在有限 Monte-Carlo 样本与 CRN 条件下，empirical 均值
+% 残余噪声会局部反转单调性。PAVA 投影到单调-递减锥上，是该约束下的
+% 约束极大似然估计 (Robertson, Wright, Dykstra 1988, §1.2)。
+% 默认开启；'EnforceMonotone', false 关闭以查看 raw empirical 均值。
+% 左轴 R3 折线**不**做投影，保留原始 mean。
+if opt.EnforceMonotone
+    for s = 1:size(delta_R3_bar, 2)
+        delta_R3_bar(:, s) = monotoneIsotonicProjection(delta_R3_bar(:, s), 'decreasing');
+    end
+end
+
 disp_labels     = strrep(cellstr(scenario_labels), '_', '\_');
 delay_disp_lbls = disp_labels(delay_idx);
 

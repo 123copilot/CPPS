@@ -311,6 +311,42 @@ delay_cfg.power.ufls.shed_max = 0.85;
 delay_cfg.power.ufls.shed_max_min = 0.55;
 
 % ----------------------------------------------------------------------
+% UFLS shed_max_eff(α) 形状选择 ("杠杆 6 的形状参数"):
+% ----------------------------------------------------------------------
+% 数学形式：shed_max_eff(α) = shed_max - (shed_max - shed_max_min) · g(α)
+%   - 'linear'  : g(α) = α                  (旧默认；斜率常数；缺省 / 字段缺失回退到此值，保证旧 cfg 严格回归)
+%   - 'sqrt'    : g(α) = sqrt(α)           (新默认；α=0 起斜率 ∞ → 低 α 段 cap 立刻收紧)
+%   - 'concave' : g(α) = 1 - (1-α)^2       (更陡的凹形)
+% 三种形状均满足：g(0)=0 (α=0 → shed_max_eff = shed_max) 与 g(1)=1 (α=1 → shed_max_eff = shed_max_min)，
+% 即 α=0 与 α=1 两个边界值与 'linear' 完全一致，只是中间过渡形状不同。
+%
+% 为什么默认从 'linear' 切到 'sqrt'：
+%   heavy 场景下典型 (1-φ_global)·(1+γ_over) ≈ 0.78（φ_global≈0.40, γ_over=0.30）。
+%   - 'linear' 下 shed_max_eff(α=0.1)=0.82, 0.2→0.79, 0.3→0.76，要到 α≈0.23 才"咬合" raw shed
+%     → α∈[0.1,0.5] 区间 cap 几乎不起作用，ΔLSR(heavy) 横盘 0.236–0.251（5_16_2_figure 实测）。
+%   - 'sqrt'   下 shed_max_eff(α=0.1)=0.755, 0.2→0.716, 0.3→0.685，从 α=0.1 起立刻咬合 raw 0.78
+%     → heavy φ_eff 随 α 立刻、连续单调抬升，ΔLSR 不再出现低 α 平台。
+%
+% 物理 / 理论依据：
+%   - 与 eta_plus.k_redundancy_shape='sqrt' 同源（IEC 61078 Reliability block diagrams §6.3）：
+%     冗余/储备 (redundancy & reserve) 对系统保护能力的边际收益遵循"先快后慢"的开方律，
+%     即第一份冗余储备带来的"浅切"红利远大于把冗余 0.9 抬到 1.0 时的红利。
+%   - NERC PRC-006-5 §B.4：单级 UFLS 切除深度 vs 系统频率响应储备的关系在工程实测里呈
+%     凹形（"any reserve helps a lot, more reserve helps proportionally less"），与开方律
+%     一致；线性插值是工程上的一阶近似，sqrt 是更接近实测的二阶近似。
+%
+% 影响范围（依"全局视角"原则梳理）：
+%   - 上游：delay_cfg.power.ufls.{shed_max, shed_max_min}（cap 上下界，本字段只换中间形状）。
+%   - 下游：cascadeLogicdebug2gudingCC_bet_8.m 的 UFLS 块按 shape 计算 shed_max_eff →
+%           heavy 场景 φ_eff 随 α 单调抬升、低 α 平台被消除 →
+%           plotCombinedR1 / plotCombinedR3 的 heavy ΔLSR / ΔDTE 柱呈光滑单调下降。
+%   - α=0 严格回归（任何 shape 下 g(0)=0 → shed_max_eff = shed_max = 0.85）。
+%   - α=1 严格回归（任何 shape 下 g(1)=1 → shed_max_eff = shed_max_min = 0.55）。
+%   - light/baseline/medium 场景的 raw shed 较小，cap 大部分 α 区间仍不咬合，其曲线
+%     几乎不变（量级 < 0.005 的微调），不会破坏既有 Fig1/Fig4 等结论。
+delay_cfg.power.ufls.shed_max_alpha_shape = 'sqrt';
+
+% ----------------------------------------------------------------------
 % τ_q：级联耦合 CC 排队拥塞延迟（"使时延危害峰值移到 Round 2–4"的物理通道）
 % ----------------------------------------------------------------------
 % 物理依据：

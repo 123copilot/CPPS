@@ -785,12 +785,33 @@ parfor idxAlpha = 1:numA
                     % 物理依据：α 越大代表 (1+α)·P_branch 容量裕度越大、
                     %   N-k 运行储备越深，初级调频能在 UFLS 介入前托住频率，
                     %   单次 UFLS 仅需 "浅切"。反之 α=0 须保留 "深切" 上限。
-                    % 线性插值：α=0 → shed_max（与历史行为一致），
-                    %   α=1 → shed_max_min；alpha 取值范围 [0,1] 由
-                    %   cascadeLogic 顶层 alpha_range 限定，clamp 仍做防御性处理。
+                    % 形状插值：shed_max_eff = shed_max - (shed_max - shed_max_min)·g(α)
+                    %   g(α) ∈ {linear, sqrt, concave}，由 delay_cfg.power.ufls
+                    %   .shed_max_alpha_shape 选择（缺省 'linear' = 旧行为）。
+                    %   三种形状均满足 g(0)=0、g(1)=1 → α=0 与 α=1 边界严格不变，
+                    %   只是中间过渡形状不同。sqrt 形让低 α 段 cap 立刻收紧，
+                    %   消除 heavy 场景的"低 α 平台"（IEC 61078 边际递减律）。
                     alpha_clamped = max(0, min(1, alpha));
+                    shed_shape = 'linear';   % 字段缺失 → 与历史完全一致
+                    if isfield(delay_cfg.power.ufls, 'shed_max_alpha_shape') ...
+                            && ~isempty(delay_cfg.power.ufls.shed_max_alpha_shape)
+                        shed_shape = delay_cfg.power.ufls.shed_max_alpha_shape;
+                    end
+                    switch lower(shed_shape)
+                        case 'linear'
+                            alpha_shaped = alpha_clamped;
+                        case 'sqrt'
+                            alpha_shaped = sqrt(alpha_clamped);
+                        case 'concave'
+                            alpha_shaped = 1 - (1 - alpha_clamped) ^ 2;
+                        otherwise
+                            error('cascadeLogic:invalidShedShape', ...
+                                ['delay_cfg.power.ufls.shed_max_alpha_shape ' ...
+                                 '必须为 ''linear'' / ''sqrt'' / ''concave''，' ...
+                                 '收到 ''%s''。'], shed_shape);
+                    end
                     shed_max_eff = shed_max_local - ...
-                        (shed_max_local - shed_max_min_local) * alpha_clamped;
+                        (shed_max_local - shed_max_min_local) * alpha_shaped;
 
                     if tau_ref_local > 0
                         ufls_gamma_over = gamma_max * min(1, tau_sum_mean / tau_ref_local);

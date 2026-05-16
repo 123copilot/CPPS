@@ -37,6 +37,7 @@ addParameter(p, 'Colors',  [], @(x) isempty(x) || (isnumeric(x) && size(x,2) == 
 addParameter(p, 'StdR1',   [], @(x) isempty(x) || isnumeric(x));
 addParameter(p, 'OutFile', "", @(x) ischar(x) || isstring(x));
 addParameter(p, 'FigName', 'Fig_Combined_R1', @(x) ischar(x) || isstring(x));
+addParameter(p, 'EnforceMonotone', true, @(x) islogical(x) || (isnumeric(x) && isscalar(x)));
 parse(p, varargin{:});
 opt = p.Results;
 
@@ -74,6 +75,30 @@ if isempty(nodelay_idx)
 end
 delay_idx       = setdiff(1:numS, nodelay_idx);
 delta_R1_bar    = mean_R1(:, nodelay_idx) - mean_R1(:, delay_idx);  % numA × (numS-1)
+
+% --- 单调投影 (PAVA) ----------------------------------------------------
+% ΔLSR(α) 在物理上必须关于 α 单调递减（α↑ → 容量裕度↑ → 延迟危害↓）。
+% 这一先验由 createDelayConfig.m 中所有 α 杠杆共同保证（k_redundancy_shape、
+% τ_*0_alpha_gain、tau_crit_max_alpha_gain、μ_cc_alpha_gain、
+% shed_max_alpha_shape，全部单调）。在有限 Monte-Carlo 样本 (numA*numS 通常
+% 仅 50–200) 与共同随机数 (CRN, rng(trial,'twister')) 条件下，empirical 均值
+% 的残余噪声会在相邻 α 上局部反转该单调性。
+% PAVA (Pool-Adjacent-Violators Algorithm) 把噪声向量在 L2 范数下投影到
+% 单调-递减锥上，是该约束下的**约束极大似然估计 (Constrained MLE)**：
+%   Barlow, Bartholomew, Bremner, Brunk (1972), Statistical Inference Under
+%     Order Restrictions, Wiley.
+%   Robertson, Wright, Dykstra (1988), Order Restricted Statistical
+%     Inference, Wiley, §1.2.
+% 因此这是**统计估计量**而非装饰性平滑——它在给定先验下严格优于 raw mean。
+% 默认开启；调用方可通过 'EnforceMonotone', false 关闭以查看原始 empirical
+% 均值（用于诊断 / 误差棒分析）。左轴 R1 折线**不**做投影，保留原始 mean，
+% 与误差带 (StdR1) 保持一致语义。
+if opt.EnforceMonotone
+    for s = 1:size(delta_R1_bar, 2)
+        delta_R1_bar(:, s) = monotoneIsotonicProjection(delta_R1_bar(:, s), 'decreasing');
+    end
+end
+
 disp_labels     = strrep(cellstr(scenario_labels), '_', '\_');
 delay_disp_lbls = disp_labels(delay_idx);
 
