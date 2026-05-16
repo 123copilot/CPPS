@@ -130,6 +130,44 @@ delay_cfg.power.eta_plus.tau_ref = 0.22;   % 拥塞参考时延 (s, baseline τ_
 %                 1-(1-0.5)^3=0.875（绝对增量 +0.375，η 抬升 ~17%）。
 delay_cfg.power.eta_plus.k_max_redundancy = 3;
 
+% --- k_eff(α) 形状选择：'linear' | 'sqrt' | 'concave' -------------------
+% 物理依据：IEC 61078 RBD 与 IEEE Std 493 §3.2 "Gold Book" 指出，并联冗余
+%   的可靠性增益服从"边际收益递减"规律——第一份冗余通道把 MTTF 从
+%   1·MTBF 提到 ~1.5·MTBF（增益最大），第二份冗余只把它再抬到 ~1.83·MTBF。
+%   线性映射 α ↔ k_eff 把"投资量"和"等效路径数"画了等号，但实际工程是
+%   "投资多花在异地热备 / 路由独立性 / 协议栈正交化" 上，**等效独立路径数
+%   对投资比例的导数应在 α=0 处最大**——即 sqrt 形式才是 IEC 61078 边际
+%   收益递减曲线的简化解析逼近。
+%   Buldyrev et al., *Nature* 2010 supplemental §III 的 percolation
+%   backup-channel 模型也使用 √k 作为有效冗余度，与本字段同源。
+%
+% 取值含义：
+%   'linear'  (旧)  : k_eff = 1 + α · (k_max - 1)
+%   'sqrt'    (默认): k_eff = 1 + sqrt(α) · (k_max - 1)
+%   'concave' (备用): k_eff = 1 + (1 - (1-α)^2) · (k_max - 1)
+%                     （比 sqrt 更陡的凹形，α 接近 1 时趋于水平）
+%
+% 关键边界：α=0 → k_eff=1 严格成立（所有 α=0 历史结果回归不变，与
+%   k_max 字段缺省时的 k_eff=1 同行为）；α=1 → k_eff=k_max（不变）。
+%
+% 为何把默认从 'linear' 改成 'sqrt'：
+%   线性 k_eff 让 Φ_loss 增量在 α 中是凸的 → R1_heavy(α) 抬升集中在
+%   α≥0.5 段 → ΔLSR 在 α<0.5 段几乎不变（"平台"），α>0.5 段才陡降，
+%   这与 IEC 61078 边际收益递减规律相反，也是 R1_Combined 柱图"低 α
+%   平台 + 高 α 陡降"台阶状的根因。改用 sqrt 后 α=0.1 → k_eff≈1.63
+%   （线性=1.2，sqrt 大幅前置增益），α=0.5 → 2.41，α=1 → 3.0 不变，
+%   ΔLSR 全段呈单调带弧度的下降。
+%
+% 影响范围（依"全局视角"原则梳理上下游）：
+%   上游依赖：alpha 已在 cascadeLogic 中按机组传入 computeEtaPlus；
+%             ep.k_max_redundancy 已经是凹形的"上界"。
+%   下游影响：computeEtaPlus.m 内 k_eff 计算 → Φ_loss → η → R1/R3。
+%             plotCombinedR1/R3 / Fig4/Fig4b 热力图会随之展现更平滑、
+%             单调的 α 下降趋势；α=0 锚点严格回归。
+%             其他三条 α 杠杆（τ_m0/e0_alpha_gain、tau_crit_max_alpha_gain、
+%             mu_cc_alpha_gain）保持线性，不与本字段交互。
+delay_cfg.power.eta_plus.k_redundancy_shape = 'sqrt';
+
 % Φ_crit: (1 + exp(-β)) / (1 + exp(β·((τ_m+τ_e) - τ_crit_i)/τ_crit_i))
 %   归一化形式 = 原始 logistic / logistic(τ=0)，保证 Φ_crit(τ=0) = 1，
 %   即理想信道下机组不被临界因子降额（与 Φ_sat、Φ_loss 在 τ=0 处的
@@ -453,6 +491,47 @@ delay_cfg.power.round_envelope.r_peak  = 3;     % W 充能到 1.0 的轮次
 delay_cfg.metrics.enable_r1 = true;
 delay_cfg.metrics.enable_r2 = false;
 delay_cfg.metrics.enable_r3 = true;
+
+% ----------------------------------------------------------------------
+% R3 样本基策略：是否把"已跳闸/孤岛机组"也计入容量加权 NRMSE 样本基
+% ----------------------------------------------------------------------
+% 物理依据：
+%   NERC BAL-001-2 与 Jaleeli et al. 1992 对 ACE / 调度跟踪误差的口径是
+%   "对所有 committed-and-on-AGC 机组"求加权 NRMSE——一台被 cascade 跳掉
+%   的机组并未从 dispatch 命令对象集合中消失（其 setpoint 仍是原 P_ref），
+%   只是 P_actual = 0，这构成一次 100% 的跟踪失败，按物理口径必须计入 R3。
+%
+%   早先版本把跳闸机组从 R3 样本基里剔除，担心"与 R1 双重计费"。复盘后
+%   该担心是误判：R1 度量 served-load（用户侧），R3 度量 dispatch-fidelity
+%   （发电侧），两者是相互独立的 KPI——同一次跳闸事件可同时让用户少用电
+%   (R1↓) 和让调度命令未达成 (R3↑)，而所谓"双重计费"指的是同一 KPI 内
+%   对同一事件加权两次，这里并不构成。
+%
+% 度量学伪影（旧 in-service-only 口径产生的非物理现象）：
+%   α=0.1 (heavy) 时大批机组跳闸 → in-service 集合很小 → R3_heavy 在小
+%   分母上偏低；同时 R3_no_delay 也基于较大 in-service 基 → ΔR3 反而最大
+%   → R3 热力图最亮带异常停在 α=0.1 整行。补回跳闸样本后 R3 对所有 α 严格
+%   单调（α 越大 → 跳闸越少 → R3 越小 → ΔR3 = R3_heavy - R3_no_delay 越小）。
+%
+% 数学形式：
+%   每轮 r 在 (P_ref_round, P_actual_round) in-service 样本之外，追加
+%   "原本调度但已跳闸/孤岛"的机组样本：(P_ref = mpc.gen 原值, P_actual = 0)
+%   再调用 computeR3Deviation 不变。
+%
+% 兼容/回退：
+%   delay_cfg.metrics.r3_include_tripped = false → 退回 in-service-only
+%     口径，与本 PR 之前数值严格一致（用于回归对比）。
+%   字段缺失（旧 cfg）→ 默认 true（采用新口径）。
+%
+% 影响范围（依"全局视角"原则梳理上下游）：
+%   上游依赖：bet_homo_gudingCC_myself_bet_8.m 的 round_logs（每轮的
+%     dil_round.gen_bus 给出 in-service 机组 ID 集合）+ mpc.gen（初始
+%     P_ref 与全部机组 bus 列表）。
+%   下游影响：R3_mat (trial 级)、round_ts_R3_cell (per-round 累计)、
+%     mean_ts_R3 (LVCF) → Fig4b 热力图 + plotCombinedR3 折线/柱。
+%     R1 完全不动（仍走 P_ref_traj/P_actual_traj 的 in-service-only 通路），
+%     避免 R1 与 R3 之间的耦合改动。
+delay_cfg.metrics.r3_include_tripped = true;
 
 % R1 分区阈值（百分比）
 delay_cfg.experiment.delay_scan_ms = 0:50:500;

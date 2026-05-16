@@ -249,6 +249,19 @@ for idxScenario = 1:num_delay_scenarios
             % 被切机组的危害归 R1，避免双重计费。
             P_ref_traj = [];
             P_actual_traj = [];
+            % R3 专用轨迹：在 R1 的 in-service 样本之外，追加"原本调度但已
+            % 跳闸/孤岛"的机组 (P_ref=Pg, P_actual=0)，恢复 NERC BAL-001-2 /
+            % Jaleeli 1992 对 ACE 的"对所有 committed 机组"加权 NRMSE 口径。
+            % 由 delay_cfg.metrics.r3_include_tripped 开关；false 时与
+            % R1 共用 P_ref_traj/P_actual_traj（旧 in-service-only 口径）。
+            P_ref_R3_traj = [];
+            P_actual_R3_traj = [];
+            if isfield(delay_cfg, 'metrics') && ...
+                    isfield(delay_cfg.metrics, 'r3_include_tripped')
+                r3_include_tripped = logical(delay_cfg.metrics.r3_include_tripped);
+            else
+                r3_include_tripped = true;  % 缺省采用新口径
+            end
 
             if isempty(round_logs)
                 R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
@@ -307,25 +320,51 @@ for idxScenario = 1:num_delay_scenarios
                         % NRMSE）共用同一在场机组样本集
                         P_ref_traj = [P_ref_traj; P_ref_round]; %#ok<AGROW>
                         P_actual_traj = [P_actual_traj; P_actual_round]; %#ok<AGROW>
+
+                        % --- R3 专用轨迹：在 in-service 样本之外追加跳闸机组样本 ---
+                        % 物理依据：NERC BAL-001-2 / Jaleeli 1992 对调度跟踪误差的
+                        % 标准口径包含所有 committed 机组——已跳闸/孤岛机组的
+                        % setpoint 仍是原 P_ref，P_actual=0 构成 100% 跟踪失败。
+                        % "在场机组"通过 P_ref_round/P_actual_round 已计入；
+                        % "已跳闸/孤岛机组" = mpc.gen 中原始 P_ref>eps 的全部
+                        % 机组减去本轮 in-service 集合（dil_round.gen_bus）。
+                        P_ref_R3_traj = [P_ref_R3_traj; P_ref_round]; %#ok<AGROW>
+                        P_actual_R3_traj = [P_actual_R3_traj; P_actual_round]; %#ok<AGROW>
+                        if r3_include_tripped
+                            in_service_buses_round = dil_round.gen_bus(:);
+                            for gAll = 1:size(mpc.gen, 1)
+                                bus_g_all = mpc.gen(gAll, 1);
+                                pg_ref_g_all = mpc.gen(gAll, 2);
+                                if abs(pg_ref_g_all) > eps && ...
+                                        ~any(in_service_buses_round == bus_g_all)
+                                    % 该机组本轮已跳闸/孤岛/不可达：P_actual=0
+                                    P_ref_R3_traj(end+1, 1)    = pg_ref_g_all;     %#ok<AGROW>
+                                    P_actual_R3_traj(end+1, 1) = 0;                 %#ok<AGROW>
+                                end
+                            end
+                        end
+
                         % 以 w_r=ΣP_ref_round 加权累计 φ_eff 与 surviving_load
                         w_r = sum(P_ref_round);
                         traj_w_total = traj_w_total + w_r;
                         traj_w_phi_eff_sum = traj_w_phi_eff_sum + w_r * phi_eff_round;
                         traj_w_surv_load_sum = traj_w_surv_load_sum + w_r * surv_load_round;
 
-                        % 本轮累计 R3：以"截至本轮的全程在场机组样本"
-                        % (P_ref_traj, P_actual_traj) 计算容量加权 NRMSE。
-                        % 这与 trial 级 R3_mat（见下方 line ~410）以及
+                        % 本轮累计 R3：以"截至本轮的全程样本"
+                        % (P_ref_R3_traj, P_actual_R3_traj) 计算容量加权 NRMSE。
+                        % 当 r3_include_tripped=true 时，样本基同时覆盖
+                        % "在场机组的 η-折损" 与 "跳闸机组的 100% 跟踪失败"，
+                        % 与 trial 级 R3_mat（见下方 line ~410）以及
                         % plotCombinedR3 完全同口径——round_R3_values(end) ≡ R3_mat。
+                        % r3_include_tripped=false 时，P_ref_R3_traj ≡ P_ref_traj，
+                        % 行为与旧 in-service-only 口径严格一致。
                         % 走累计口径的物理含义：第 r 轮的 R3 反映"截至 r 轮整个
                         % 系统的累积调度跟踪误差"。结合 LVCF 后段填充，跨场景差
                         % ΔR3(r) = R3_heavy(r) − R3_nodelay(r) 在 LVCF 平台后
                         % 仍保留有限差值（两条 LVCF 平台的高度差），让"延迟在中段
                         % 轮次涌现"的现象在 Fig4b 热力图后段轮次依然有色而非塌成 0。
-                        % 这正是 5_9 时代热力图能呈现 11 轮宽幅、r=2-5 中段稳定
-                        % 暗红/红色"延迟带"的口径。
                         round_R3_values(roundIdx) = computeR3Deviation( ...
-                            P_actual_traj, P_ref_traj);
+                            P_actual_R3_traj, P_ref_R3_traj);
                     else
                         round_R1_values(roundIdx) = computeR1LoadRatio(initial_power_load, rl.failed_power_nodes);
                     end
@@ -400,17 +439,22 @@ for idxScenario = 1:num_delay_scenarios
                 R1_mat(idxAlpha, trial, idxScenario) = computeR1LoadRatio(initial_power_load, failed_pn);
             end
 
-            % R3：复用 R1 的全程在场机组样本集 (P_ref_traj, P_actual_traj)，
-            % 采用容量加权 NRMSE（computeR3Deviation 内实现）。R3 只度量
-            % "在场机组的跟踪偏差"——被切除/孤岛机组的危害已由 R1 的
-            % surviving_load·φ_eff 通路完整承担，不在 R3 中重复计费。
-            % α 通过两条物理通路进入 R3：
+            % R3：在 R1 的全程在场机组样本集 (P_ref_traj, P_actual_traj) 之外，
+            % 追加跳闸/孤岛机组的 (P_ref=Pg, P_actual=0) 形成 R3 专用样本集
+            % (P_ref_R3_traj, P_actual_R3_traj)，恢复 NERC BAL-001-2 / Jaleeli 1992
+            % 对调度跟踪误差的"committed 机组加权 NRMSE"标准口径。
+            % α 通过三条物理通路进入 R3：
             %   (1) (1+α)·rate 抬高线路阈值 → 改变每轮在场集合 S_r
             %       与 P_ref 权重分布
             %   (2) UFLS shed_max_eff(α) → γ_over → η_round
+            %   (3) k_eff(α) → Φ_loss → η_round（"杠杆 1"）
+            % 与 R1 不双重计费：R1 度量 served-load（用户侧 KPI），
+            % R3 度量 dispatch-fidelity（发电侧 KPI），二者独立。
             % computeR3Deviation 的 P_ref==0 守卫由上游 abs(.)>eps 过滤保证。
-            if ~isempty(P_ref_traj) && sum(P_ref_traj) > 0
-                R3_mat(idxAlpha, trial, idxScenario) = computeR3Deviation(P_actual_traj, P_ref_traj);
+            % 当 r3_include_tripped=false 时，P_ref_R3_traj ≡ P_ref_traj，
+            % 与旧 in-service-only 口径严格一致，单条分支即可覆盖两种口径。
+            if ~isempty(P_ref_R3_traj) && sum(P_ref_R3_traj) > 0
+                R3_mat(idxAlpha, trial, idxScenario) = computeR3Deviation(P_actual_R3_traj, P_ref_R3_traj);
             end
 
             % 聚合延迟因素
@@ -1404,6 +1448,10 @@ if ~exist(save_dir, 'dir')
 end
 
 % 保存所有 figure
+% 工程依据：MATLAB 默认 saveas → painters 渲染器，imagesc + colorbar
+%   大像素图常见保存数十秒甚至超时；exportgraphics + opengl 渲染器可
+%   把同样的图压到秒级，并显式控制分辨率。print 失败时回退到 saveas，
+%   保证旧版 MATLAB / Octave 兼容。
 figHandles = findall(0, 'Type', 'figure');
 for fIdx = 1:numel(figHandles)
     fig = figHandles(fIdx);
@@ -1411,8 +1459,35 @@ for fIdx = 1:numel(figHandles)
     if isempty(fig_name)
         fig_name = sprintf('figure_%d', fig.Number);
     end
-    savefig(fig, fullfile(save_dir, [fig_name, '.fig']));
-    saveas(fig, fullfile(save_dir, [fig_name, '.png']));
+    fig_path_fig = fullfile(save_dir, [fig_name, '.fig']);
+    fig_path_png = fullfile(save_dir, [fig_name, '.png']);
+    try
+        savefig(fig, fig_path_fig);
+    catch ME_fig
+        warning('savefig 失败 (%s): %s', fig_name, ME_fig.message);
+    end
+    % 切换到 opengl 渲染器以加速 PNG 导出（painters 在 imagesc 大图上很慢）。
+    try
+        set(fig, 'Renderer', 'opengl');
+    catch
+        % 某些 headless / 旧版本无 opengl，忽略并走默认渲染器
+    end
+    saved_png = false;
+    if exist('exportgraphics', 'file') == 2  % R2020a+ 才有
+        try
+            exportgraphics(fig, fig_path_png, 'Resolution', 200);
+            saved_png = true;
+        catch ME_eg
+            warning('exportgraphics 失败 (%s): %s，回退 saveas', fig_name, ME_eg.message);
+        end
+    end
+    if ~saved_png
+        try
+            saveas(fig, fig_path_png);
+        catch ME_sa
+            warning('saveas 也失败 (%s): %s', fig_name, ME_sa.message);
+        end
+    end
 end
 
 % 保存工作空间
