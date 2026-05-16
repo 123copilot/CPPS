@@ -7,7 +7,8 @@ function [eta, components] = computeEtaPlus(tau_m, tau_e, n_hops_total, P_g_ref_
 %   Φ_loss = 1 - (1 - Φ_loss_single)^k_eff(α)   （并行冗余可靠性，IEEE Std 493 / IEC 61078）
 %       Φ_loss_single = (1 - p_hop_eff)^n_hops_total
 %       p_hop_eff     = p_hop · min(1, (τ_m + τ_e)/τ_ref)
-%       k_eff(α)      = 1 + α · (k_max - 1)         （k_max 来自 delay_cfg.power.eta_plus.k_max_redundancy）
+%       k_eff(α)      = 1 + s(α) · (k_max - 1)         （k_max 来自 delay_cfg.power.eta_plus.k_max_redundancy）
+%       s(α): 'linear'→α, 'sqrt'→√α (默认), 'concave'→1-(1-α)² ；α=0 三者 = 0 → k_eff=1 严格回归。
 %   Φ_crit = (1 + exp(-β)) / (1 + exp(β · ((τ_m + τ_e) - τ_crit_i)/τ_crit_i))
 %       （归一化形式：等价于 logistic 除以其 τ=0 处取值，保证 Φ_crit(0)=1）
 %   τ_crit_i = τ_crit_max_eff(α) · r_i,   r_i = P_g_ref_i / P_g_ref_max  （方案 A）
@@ -30,8 +31,11 @@ function [eta, components] = computeEtaPlus(tau_m, tau_e, n_hops_total, P_g_ref_
 %   delay_cfg           struct：必须包含 .power.eta_plus 子结构
 %   alpha               (可选) 标量：N-k 容量裕度系数 ∈ [0,1]，
 %                        映射到 CC↔gen 通信通道的等效并行冗余度
-%                        k_eff(α) = 1 + α·(k_max-1)。默认 0（=单通道，
-%                        与历史版本 Φ_loss 严格回归，所有 α=0 历史结果不变）。
+%                        k_eff(α) = 1 + s(α)·(k_max-1)，s 形状由
+%                        delay_cfg.power.eta_plus.k_redundancy_shape 选择
+%                        ('linear'/'sqrt'/'concave'，缺省 'linear' 严格回归)。
+%                        默认 α=0（=单通道，与历史版本 Φ_loss 严格回归，
+%                        所有 α=0 历史结果不变）。
 %
 % 返回
 % ----
@@ -158,8 +162,29 @@ end
 p_hop_eff = max(0, min(1, p_hop_eff));
 phi_loss_single = (1 - p_hop_eff) .^ n_hops_total;
 phi_loss_single = max(0, min(1, phi_loss_single));
-% 并行冗余：k_eff(α) = 1 + α·(k_max-1)。α=0 ⇒ k_eff=1 ⇒ phi_loss = phi_loss_single。
-k_eff = 1 + alpha * (k_max - 1);
+% 并行冗余：k_eff(α) 形状由 ep.k_redundancy_shape 选择（缺省 'sqrt'）。
+%   'linear'  : k_eff = 1 + α·(k_max-1)（旧版默认；增益线性，凸的 Φ_loss(α)）
+%   'sqrt'    : k_eff = 1 + sqrt(α)·(k_max-1)（默认；IEC 61078 边际递减逼近）
+%   'concave' : k_eff = 1 + (1 - (1-α)^2)·(k_max-1)（更陡的凹形）
+% 物理依据见 createDelayConfig.m 的 k_redundancy_shape 注释块。
+% α=0 在三种形状下均给出 k_eff=1 ⇒ phi_loss = phi_loss_single（严格回归）。
+if isfield(ep, 'k_redundancy_shape') && ~isempty(ep.k_redundancy_shape)
+    k_shape = ep.k_redundancy_shape;
+else
+    k_shape = 'linear';  % 字段缺失（旧 cfg）→ 与历史版本严格一致
+end
+switch lower(k_shape)
+    case 'linear'
+        alpha_k = alpha;
+    case 'sqrt'
+        alpha_k = sqrt(max(0, alpha));
+    case 'concave'
+        alpha_k = 1 - (1 - max(0, min(1, alpha))) .^ 2;
+    otherwise
+        error('computeEtaPlus:invalidKShape', ...
+            'k_redundancy_shape 必须为 ''linear'' / ''sqrt'' / ''concave''，收到 ''%s''。', k_shape);
+end
+k_eff = 1 + alpha_k * (k_max - 1);
 phi_loss = 1 - (1 - phi_loss_single) .^ k_eff;
 phi_loss = max(0, min(1, phi_loss));
 
