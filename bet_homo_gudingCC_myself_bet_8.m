@@ -1452,6 +1452,16 @@ end
 %   大像素图常见保存数十秒甚至超时；exportgraphics + opengl 渲染器可
 %   把同样的图压到秒级，并显式控制分辨率。print 失败时回退到 saveas，
 %   保证旧版 MATLAB / Octave 兼容。
+% savefig 加 'compact' 选项 (MathWorks doc: "Save Figure for Future
+%   MATLAB Sessions") 可省略冗余的对象/属性序列化，对含 yyaxis +
+%   grouped bars + shaded fill patch 的 combined fig 通常 5–10× 提速、
+%   文件体积小一半以上；其代价是 R2014b 以前 MATLAB 无法重新打开 .fig，
+%   本仓库的依赖 (computeEtaPlus / cascadeLogic) 已要求 R2020a+，故安全。
+% Renderer='opengl' 仅对含 image 对象 (imagesc 热力图) 的 figure 切换；
+%   combined fig 含 FaceAlpha 半透明 patch (shaded bands + translucent
+%   bars)，opengl 在 headless / 软件回退环境下会**静默丢失透明度通道**
+%   甚至 exportgraphics 静默返回空白 PNG（即用户报告的"有时不能保存"）。
+%   painters 渲染矢量精确、对透明度可靠，是这类图的安全默认。
 figHandles = findall(0, 'Type', 'figure');
 for fIdx = 1:numel(figHandles)
     fig = figHandles(fIdx);
@@ -1462,15 +1472,20 @@ for fIdx = 1:numel(figHandles)
     fig_path_fig = fullfile(save_dir, [fig_name, '.fig']);
     fig_path_png = fullfile(save_dir, [fig_name, '.png']);
     try
-        savefig(fig, fig_path_fig);
+        savefig(fig, fig_path_fig, 'compact');
     catch ME_fig
         warning('savefig 失败 (%s): %s', fig_name, ME_fig.message);
     end
-    % 切换到 opengl 渲染器以加速 PNG 导出（painters 在 imagesc 大图上很慢）。
-    try
-        set(fig, 'Renderer', 'opengl');
-    catch
-        % 某些 headless / 旧版本无 opengl，忽略并走默认渲染器
+    % 仅含 image 对象 (imagesc 热力图) 的图切 opengl 渲染器加速 PNG 导出；
+    % 其他图 (combined yyaxis bar+line 等) 保留默认 painters，避免半透明
+    % patch 在 opengl 软件回退下静默失败。
+    has_image_obj = ~isempty(findall(fig, 'Type', 'image'));
+    if has_image_obj
+        try
+            set(fig, 'Renderer', 'opengl');
+        catch
+            % 某些 headless / 旧版本无 opengl，忽略并走默认渲染器
+        end
     end
     saved_png = false;
     if exist('exportgraphics', 'file') == 2  % R2020a+ 才有
