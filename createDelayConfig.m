@@ -577,10 +577,22 @@ delay_cfg.metrics.enable_r3 = true;
 %   "原本调度但已跳闸/孤岛"的机组样本：(P_ref = mpc.gen 原值, P_actual = 0)
 %   再调用 computeR3Deviation 不变。
 %
+% 默认：in-service-only（5_15_2 及更早各次实验所用口径）。
+%   true 口径（include tripped）虽然在物理上无双重计费风险，但实测发现 cascade
+%   级联跳机贡献的 ||P_ref-P_actual||² 在量级上彻底压倒 η⁻ 的在场机组调度偏差，
+%   导致 R3 退化为"跳机容量比例"指标——所有场景同时被 cascade-trip 计数 dominate
+%   → no_delay / light / baseline 三条 R3 曲线几乎重合，ΔDTE 柱失去分辨率，且
+%   Fig4b 热力图在 r=1 即已饱和、中段轮次无梯度。
+%   in-service-only 才是延迟下 dispatch-fidelity 的正确度量——Jaleeli 1992 原
+%   始 NRMSE 即对 *responsive* 机组求和；NERC BAL-001-2 "all-committed unit
+%   ACE NRMSE" 用于正常运行下的二次调频品质评估，并非为 cascade outage 设计。
+%   跳机信息已由 R1 served-load 完整覆盖（served-load 直接含 trip 后果），不会
+%   因为 R3 改用 in-service-only 而丢失。
+%
 % 兼容/回退：
-%   delay_cfg.metrics.r3_include_tripped = false → 退回 in-service-only
-%     口径，与本 PR 之前数值严格一致（用于回归对比）。
-%   字段缺失（旧 cfg）→ 默认 true（采用新口径）。
+%   delay_cfg.metrics.r3_include_tripped = true → 切回 BAL-001-2
+%     "all-committed" 口径（旧 R3 sample base policy，用于回归对比）。
+%   字段缺失（旧 cfg）→ 默认 false（采用新默认 = 旧 5_15_2 口径）。
 %
 % 影响范围（依"全局视角"原则梳理上下游）：
 %   上游依赖：bet_homo_gudingCC_myself_bet_8.m 的 round_logs（每轮的
@@ -590,7 +602,7 @@ delay_cfg.metrics.enable_r3 = true;
 %     mean_ts_R3 (LVCF) → Fig4b 热力图 + plotCombinedR3 折线/柱。
 %     R1 完全不动（仍走 P_ref_traj/P_actual_traj 的 in-service-only 通路），
 %     避免 R1 与 R3 之间的耦合改动。
-delay_cfg.metrics.r3_include_tripped = true;
+delay_cfg.metrics.r3_include_tripped = false;
 
 % R1 分区阈值（百分比）
 delay_cfg.experiment.delay_scan_ms = 0:50:500;

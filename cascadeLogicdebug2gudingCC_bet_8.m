@@ -551,9 +551,21 @@ parfor idxAlpha = 1:numA
                 if n_cc_r >= 1 && n_gen_r >= 1 && mu_cc_eff > 0 && s_scn > 0
                     lambda_per_cc = (n_gen_r * tq_cfg.lambda_per_gen * s_scn) / n_cc_r;
                     rho_cc        = lambda_per_cc / mu_cc_eff;
-                    rho_eff       = min(rho_cc, tq_cfg.rho_max);
-                    % 1-rho_eff ≥ 1-rho_max（rho_max≈0.95 → ≥0.05），无须 eps 兜底；
-                    % 这里直接除即可，闭式 τ_q ∈ [0, (1/μ)·ρ_max/(1-ρ_max)]。
+                    % --- 软饱和 ρ_eff = ρ_max · tanh(ρ / ρ_max) ---
+                    % 物理依据：理想 M/M/1 在 ρ→1 时 W_q 发散是 *无限缓冲* Poisson
+                    %   排队的渐近行为；真实通信系统因有限缓冲 / 优先级抢占 /
+                    %   admission control，ρ 高位区是 *平滑* 接近饱和，而非阶跃
+                    %   截断（Kleinrock 1975 §3.5 finite-buffer correction；
+                    %   Gross & Harris 2008 Fundamentals of Queueing Theory §2.5
+                    %   M/M/1/K analysis）。tanh 是同渐近线 (ρ_eff < ρ_max) 下
+                    %   最简的 C∞ 软饱和：单调、保 ρ(0)=0、ρ→∞ 时 → ρ_max；
+                    %   低 ρ (≲0.6) 段 tanh(x)≈x → 与原硬钳位 min(ρ,ρ_max) 数值
+                    %   几乎一致；只在 ρ_raw>0.7 段开始平滑收敛到 ρ_max，消除
+                    %   "heavy 在 α∈[0.1,0.5] 五段被 ρ_max=0.95 钳为常数 τ_q"
+                    %   导致的 ΔLSR 等高平台，使 τ_q 对 α 处处可导。
+                    % 数值安全：ρ_eff ∈ [0, ρ_max)，分母 1-ρ_eff ≥ 1-ρ_max > 0.05，
+                    %   闭式 τ_q ∈ [0, (1/μ)·ρ_max/(1-ρ_max)] 范围与硬钳位完全一致。
+                    rho_eff       = tq_cfg.rho_max * tanh(rho_cc / tq_cfg.rho_max);
                     tau_q_round   = (1 / mu_cc_eff) * rho_eff / (1 - rho_eff);
                 else
                     % 无 CC / 无机组 / 无流量：M/M/1 退化，τ_q=0；下游路径不可达
