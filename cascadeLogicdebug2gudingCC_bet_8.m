@@ -538,7 +538,7 @@ parfor idxAlpha = 1:numA
                 else
                     mu_alpha_shape = 'linear';  % legacy 兜底
                 end
-                alpha_clipped = max(0, min(1, alpha));  % 数值安全（α 已被上游钳，重复保险）
+                alpha_clipped = max(0, min(1, alpha));  % 保险：sqrt(α<0)→complex 会污染 mu_cc_eff，必须钳
                 switch lower(mu_alpha_shape)
                     case 'sqrt'
                         g_alpha = sqrt(alpha_clipped);
