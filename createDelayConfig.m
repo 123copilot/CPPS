@@ -416,9 +416,24 @@ delay_cfg.power.ufls.shed_max_alpha_shape = 'sqrt';
 %     才跨膝 → 延迟危害峰值落在中段轮次。
 %   ρ_max = 0.95：M/M/1 经验"阻塞警戒线"，超过该值即被认为系统陷入持续过载，
 %     真实工程会触发分流；这里把 W_q 钳在该上限对应的有限值，避免数值奇点。
-%   μ_cc_alpha_gain = 0.5：α=1 时 μ_cc_eff 抬至 270 msg/s（仍在文献区间内），
-%     使 ρ 整体降低 ~33%，让"高 α 投资 → 排队压不住时延"通过 Round 3-5 通道
-%     体现，与既有 α 三杠杆同方向（α↑ → η↑ → R1↑），不冲突。
+%   μ_cc_alpha_gain = 1.2 + mu_cc_alpha_shape = 'sqrt'（方案 A 调参）：
+%     旧值（线性 gain=0.5）下，α=1 时 μ_cc_eff 仅抬到 270 msg/s（IEC C37.247
+%     PDC 集群典型档 200–400 的下半段），且 α∈[0.1,0.5] 区间 ρ 全程被钳在
+%     ρ_max=0.95（中段 N_cc=2 时 ρ_raw≈1.2–1.4），τ_q 不变 → ΔLSR(heavy)
+%     在 α=0.1..0.5 出现长平台、α=0.7 才小幅松动（见 R1_combined Fig5）。
+%     调整后 μ_cc_eff(α) = μ_cc · (1 + 1.2 · sqrt(α))：
+%       α=0   → μ_eff=180（严格回归，与历史 Fig1/Fig4 α=0 列字字相同）；
+%       α=0.1 → μ_eff=248（ρ@N_cc=2 ≈ 1.09 仍钳，τ_q≈77ms，低 α 警示保留）；
+%       α=0.3 → μ_eff=298（ρ≈0.91 脱钳，τ_q≈32ms，质变发生在此处）；
+%       α=0.5 → μ_eff=333（ρ≈0.81，τ_q≈13ms）；
+%       α=1.0 → μ_eff=396（处 IEC C37.247 200–400 上界内，τ_q≈5ms）。
+%     物理叙事（IEC 61078，与仓库内 k_redundancy_shape='sqrt'、
+%     shed_max_alpha_shape='sqrt' 同一设计语言）：第一笔冗余投资部署
+%     最高利用率的 PDC 节点 → 边际收益最高；后续投资是冗余备份 → 收益
+%     递减。sqrt 形状把"投资让 ρ 脱离 M/M/1 膝点"这一非线性事件抬到
+%     α=0.3 而非 α=0.7，恰好打破 heavy ΔLSR [0.1, 0.5] 平台。
+%     兼容性：mu_cc_alpha_shape 字段缺失 → 'linear'（旧行为兜底）；
+%     mu_cc_alpha_gain 字段缺失 → gain=0；α=0 在任何 shape 下均回归。
 delay_cfg.power.tau_queue.enable             = true;
 delay_cfg.power.tau_queue.mu_cc              = 180;   % CC 服务速率 (msg/s)，IEEE C37.247
 % λ_per_gen = 20：经过对实际 num_cc = round(0.2·Vp) = 8（IEEE 39-bus）的复算修正。
@@ -438,7 +453,15 @@ delay_cfg.power.tau_queue.mu_cc              = 180;   % CC 服务速率 (msg/s)�
 % 全程 ≤ 0.30 永不跨膝 → 中段无峰。已回退到 20。
 delay_cfg.power.tau_queue.lambda_per_gen     = 20;    % 单机组等效 arrival rate (msg/s)
 delay_cfg.power.tau_queue.rho_max            = 0.95;  % 排队利用率上限（防奇点）
-delay_cfg.power.tau_queue.mu_cc_alpha_gain   = 0.5;   % α=1 时 μ_cc 抬升 50%
+delay_cfg.power.tau_queue.mu_cc_alpha_gain   = 1.2;   % α=1 时 μ_cc 抬升 120%（μ_eff=396 ∈ [200,400]）
+% mu_cc_alpha_shape: 'linear' | 'sqrt' | 'concave'
+%   公式：μ_cc_eff(α) = μ_cc · (1 + mu_cc_alpha_gain · g(α))
+%     'linear'  → g(α) = α          （legacy 兜底，字段缺失时使用）
+%     'sqrt'    → g(α) = sqrt(α)    （默认，IEC 61078 凸性投资回报）
+%     'concave' → g(α) = 1-(1-α)^2  （备用，更激进的早期抬升）
+%   三种形状均满足 g(0)=0、g(1)=1，故 α=0/α=1 边界与 'linear' 严格一致；
+%   仅 mid-α 区段重塑，使 ρ 在 α≈0.3 脱钳，打破 ΔLSR(heavy) 低 α 平台。
+delay_cfg.power.tau_queue.mu_cc_alpha_shape  = 'sqrt';
 
 % ----------------------------------------------------------------------
 % W(r)：控制器响应时间常数 → 通道延迟有效幅度的轮次包络

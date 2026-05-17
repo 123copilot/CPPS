@@ -527,12 +527,27 @@ parfor idxAlpha = 1:numA
                     s_scn = 1;  % baseline-equivalent fallback
                 end
                 % α 通道：高储备 → 投资 PDC 集群 → μ_cc_eff 抬升。
+                % shape ∈ {'linear','sqrt','concave'}：g(α) 形状，g(0)=0,g(1)=1。
                 if isfield(tq_cfg, 'mu_cc_alpha_gain')
                     mu_alpha_gain = tq_cfg.mu_cc_alpha_gain;
                 else
                     mu_alpha_gain = 0;
                 end
-                mu_cc_eff = tq_cfg.mu_cc * (1 + mu_alpha_gain * alpha);
+                if isfield(tq_cfg, 'mu_cc_alpha_shape')
+                    mu_alpha_shape = tq_cfg.mu_cc_alpha_shape;
+                else
+                    mu_alpha_shape = 'linear';  % legacy 兜底
+                end
+                alpha_clipped = max(0, min(1, alpha));  % 保险：sqrt(α<0)→complex 会污染 mu_cc_eff，必须钳
+                switch lower(mu_alpha_shape)
+                    case 'sqrt'
+                        g_alpha = sqrt(alpha_clipped);
+                    case 'concave'
+                        g_alpha = 1 - (1 - alpha_clipped)^2;
+                    otherwise  % 'linear' 及未知字符串
+                        g_alpha = alpha_clipped;
+                end
+                mu_cc_eff = tq_cfg.mu_cc * (1 + mu_alpha_gain * g_alpha);
                 if n_cc_r >= 1 && n_gen_r >= 1 && mu_cc_eff > 0 && s_scn > 0
                     lambda_per_cc = (n_gen_r * tq_cfg.lambda_per_gen * s_scn) / n_cc_r;
                     rho_cc        = lambda_per_cc / mu_cc_eff;
