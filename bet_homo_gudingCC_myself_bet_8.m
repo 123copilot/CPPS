@@ -260,7 +260,7 @@ for idxScenario = 1:num_delay_scenarios
                     isfield(delay_cfg.metrics, 'r3_include_tripped')
                 r3_include_tripped = logical(delay_cfg.metrics.r3_include_tripped);
             else
-                r3_include_tripped = true;  % 缺省采用新口径
+                r3_include_tripped = false;  % 缺省回退 in-service-only（Jaleeli 1992）
             end
 
             if isempty(round_logs)
@@ -884,12 +884,37 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
         end
     end
 
+    % --- α=0 行剔除 ---
+    % α=0 是"无 α-杠杆参考点"（与 plotCombinedR1/R3 已做的 α=0 过滤同理），
+    % 不携带 α-effect 信息；若 α_range 含 0 则其行的 ΔLSR 完全来自 cyber
+    % 拓扑随机性 + Φ_sat/Φ_crit 基线塌陷，会在 r=1 产生 outlier，压扁色尺
+    % 对 α≥0.1 中段轮次的对比度。仅在 imagesc 维度剔除，原始数据矩阵不变。
+    alpha_range_plot   = alpha_range;
+    delta_heatmap_plot = delta_delay_heatmap;
+    nonzero_alpha_mask = alpha_range_plot(:) > eps;
+    if any(nonzero_alpha_mask) && any(~nonzero_alpha_mask)
+        alpha_range_plot   = alpha_range_plot(nonzero_alpha_mask);
+        delta_heatmap_plot = delta_heatmap_plot(:, nonzero_alpha_mask);
+    end
+
     figure('Name', 'Fig4_Delay_Penalty_Heatmap');
-    imagesc(1:plot_max_round, alpha_range, delta_delay_heatmap');
+    imagesc(1:plot_max_round, alpha_range_plot, delta_heatmap_plot');
     set(gca, 'YDir', 'normal');
     xlim([0.5, plot_max_round + 0.5]);
     xticks(1:plot_max_round);
-    yticks(alpha_range);
+    yticks(alpha_range_plot);
+    % --- 鲁棒色尺 ---
+    % 用 [P2, P98] 裁掉极端 outlier（多来自 cyber 随机种子在某 (α,r) 上的
+    % 偶发塌陷），让中段轮次 0.1<=α<=0.5 的 ΔLSR 在色尺上充分展开。
+    % 仅修改 color-mapping 范围，不修改任何数值；NaN 仍走 AlphaData 透明。
+    vals_R1 = delta_heatmap_plot(~isnan(delta_heatmap_plot));
+    if numel(vals_R1) >= 5
+        cax_lo = prctile(vals_R1, 2);
+        cax_hi = prctile(vals_R1, 98);
+        if cax_hi > cax_lo
+            caxis([cax_lo, cax_hi]);
+        end
+    end
     cb = colorbar;
     cb.Label.String = '\DeltaLSR^{delay}  (cumulative \DeltaR_1 = R_1^{no\_delay} - R_1^{heavy})';
     xlabel('Cascade Round');
@@ -916,12 +941,32 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
         end
     end
 
+    % --- α=0 行剔除 + 鲁棒色尺（与 Fig4 同口径） ---
+    % 与 Fig4 同因：α=0 corner case 的 r=1 outlier 压扁了 r=2..5 中段轮次
+    % 的 τ_q 膝点 + W(r=3) 控制器响应包络叠加峰值的色尺对比度。剔除后中
+    % 段轮次自然显出最亮的红/橙色带（Kleinrock 1975 §3.2 + round_envelope）。
+    alpha_range_plot_R3   = alpha_range;
+    delta_heatmap_plot_R3 = delta_delay_heatmap_R3;
+    nonzero_alpha_mask_R3 = alpha_range_plot_R3(:) > eps;
+    if any(nonzero_alpha_mask_R3) && any(~nonzero_alpha_mask_R3)
+        alpha_range_plot_R3   = alpha_range_plot_R3(nonzero_alpha_mask_R3);
+        delta_heatmap_plot_R3 = delta_heatmap_plot_R3(:, nonzero_alpha_mask_R3);
+    end
+
     figure('Name', 'Fig4b_Delay_Penalty_Heatmap_R3');
-    imagesc(1:plot_max_round, alpha_range, delta_delay_heatmap_R3');
+    imagesc(1:plot_max_round, alpha_range_plot_R3, delta_heatmap_plot_R3');
     set(gca, 'YDir', 'normal');
     xlim([0.5, plot_max_round + 0.5]);
     xticks(1:plot_max_round);
-    yticks(alpha_range);
+    yticks(alpha_range_plot_R3);
+    vals_R3 = delta_heatmap_plot_R3(~isnan(delta_heatmap_plot_R3));
+    if numel(vals_R3) >= 5
+        cax_lo_R3 = prctile(vals_R3, 2);
+        cax_hi_R3 = prctile(vals_R3, 98);
+        if cax_hi_R3 > cax_lo_R3
+            caxis([cax_lo_R3, cax_hi_R3]);
+        end
+    end
     cb = colorbar;
     cb.Label.String = '\DeltaDTE^{delay}  (cumulative \DeltaR_3 = R_3^{heavy} - R_3^{no\_delay})';
     xlabel('Cascade Round');

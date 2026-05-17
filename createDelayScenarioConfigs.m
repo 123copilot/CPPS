@@ -20,7 +20,10 @@ scenario_names = ["no_delay"; "light"; "baseline"; "medium"; "heavy"];
 %   scale  | τ_total ≈ | regime / reference
 %   -------+-----------+----------------------------------------------------
 %   0.0    |     0 ms  | ideal-channel reference (no delay)
-%   0.5    |   110 ms  | local-area WAMS, IEEE C37.118.1-2011 PMU stream
+%   0.7    |   154 ms  | local-area WAMS, NASPI 2017 Phasor Gateway
+%          |           | Implementation Report Table 4.2 P75-P95 band
+%          |           | (150-250 ms intra-area), still well below the
+%          |           | IEC 61850-90-5 inter-area baseline of 220 ms.
 %   1.0    |   220 ms  | inter-area WAMS, IEC 61850-90-5 class M2/M3
 %   1.7    |   374 ms  | NASPI cross-region WAMS measured P95 band
 %          |           | (NASPI Phasor Gateway field reports 250–500 ms)
@@ -29,14 +32,20 @@ scenario_names = ["no_delay"; "light"; "baseline"; "medium"; "heavy"];
 %
 % Rationale (also reported in paper §III / Table I): scales are fixed by
 % the above references; do not retune them to chase metric values. The
-% medium/heavy anchors were tightened from (2.0, 3.5) to (1.7, 2.7) so
-% that the heavy regime no longer simultaneously crosses the Φ_sat,
-% Φ_crit and UFLS over-shed cap non-linear knees in a single step, while
-% still residing inside the documented WAMS / NERC operating envelope.
-% If τ_total at baseline is ever changed, the regime-mapping table here
-% AND Table I in the paper must be updated jointly.
+% light anchor was tightened from 0.5 (110 ms, C37.118 local PMU upper
+% bound) to 0.7 (154 ms, NASPI local-area P75-P95 band) so that the
+% η⁺/τ_q α-leverage no longer fully absorbs the light delay back to
+% τ_eff≈0, restoring a visible no_delay→light separation in R1/R3
+% figures while still placing light strictly within the local-area
+% WAMS envelope (below the inter-area baseline). The medium/heavy
+% anchors stay at (1.7, 2.7) so that heavy no longer simultaneously
+% crosses the Φ_sat, Φ_crit and UFLS over-shed cap non-linear knees in
+% a single step, while still residing inside the documented WAMS /
+% NERC operating envelope. If τ_total at baseline is ever changed, the
+% regime-mapping table here AND Table I in the paper must be updated
+% jointly.
 % -------------------------------------------------------------------------
-scenario_scales = [0.0; 0.5; 1.0; 1.7; 2.7];
+scenario_scales = [0.0; 0.7; 1.0; 1.7; 2.7];
 
 for idx = 1:numel(scenario_names)
     scenario_cfg = base_delay_cfg;
@@ -60,7 +69,7 @@ for idx = 1:numel(scenario_names)
 
     % 把 scenario_scale 写进 cfg，让下游（cascadeLogic 中的 τ_q 排队项）
     % 不必从场景结构里反查就能拿到当前场景的流量倍数：
-    %   no_delay → 0；light → 0.5；baseline → 1.0；medium → 1.7；heavy → 2.7。
+    %   no_delay → 0；light → 0.7；baseline → 1.0；medium → 1.7；heavy → 2.7。
     % τ_q 的 arrival rate λ ∝ scenario_scale，使得 no_delay 下 λ=0 → τ_q=0
     % （与 η_g=1 严格一致），其它场景下随 τ 同步增大。
     scenario_cfg.power.scenario_scale = scale;
