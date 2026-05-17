@@ -1448,35 +1448,46 @@ if ~exist(save_dir, 'dir')
 end
 
 % 保存所有 figure
-% 工程依据：MATLAB 默认 saveas → painters 渲染器，imagesc + colorbar
-%   大像素图常见保存数十秒甚至超时；exportgraphics + opengl 渲染器可
-%   把同样的图压到秒级，并显式控制分辨率。print 失败时回退到 saveas，
-%   保证旧版 MATLAB / Octave 兼容。
-% savefig 加 'compact' 选项 (MathWorks doc: "Save Figure for Future
-%   MATLAB Sessions") 可省略冗余的对象/属性序列化，对含 yyaxis +
-%   grouped bars + shaded fill patch 的 combined fig 通常 5–10× 提速、
-%   文件体积小一半以上；其代价是 R2014b 以前 MATLAB 无法重新打开 .fig，
-%   本仓库的依赖 (computeEtaPlus / cascadeLogic) 已要求 R2020a+，故安全。
-% Renderer='opengl' 仅对含 image 对象 (imagesc 热力图) 的 figure 切换；
-%   combined fig 含 FaceAlpha 半透明 patch (shaded bands + translucent
-%   bars)，opengl 在 headless / 软件回退环境下会**静默丢失透明度通道**
-%   甚至 exportgraphics 静默返回空白 PNG（即用户报告的"有时不能保存"）。
-%   painters 渲染矢量精确、对透明度可靠，是这类图的安全默认。
+% 工程依据 (回顾上次的优化，并修正最近几次"只能保存一两张"的问题):
+%   * 默认 MATLAB saveas + painters 对 imagesc 大热力图常常数十秒乃至超时；
+%     exportgraphics + opengl 渲染器可压到 ~1s，并显式控制分辨率。
+%   * savefig('compact') 对含 yyaxis + grouped bars + shaded patch 的
+%     combined fig 通常 5–10× 提速，但**整体 .fig 序列化**依然是循环里
+%     最大的时间项 (通常 80%+)；用户中途 Ctrl-C 时，PNG 还没生成就丢了。
+%   * Renderer='opengl' 仅对含 image 对象 (imagesc 热力图) 的 figure 切换；
+%     combined fig 含 FaceAlpha 半透明 patch (shaded bands + translucent
+%     bars)，opengl 在 headless / 软件回退环境下会**静默丢失透明度通道**
+%     甚至 exportgraphics 静默返回空白 PNG，painters 矢量精确且对透明度
+%     可靠，是这类图的安全默认。
+%
+% 本次修复 (针对"最近几次只保存了一两张 PNG"的反馈):
+%   1) 顺序调整: **PNG 先, .fig 后**。PNG 是分析用的成品；即使用户中途
+%      Ctrl-C，所有已处理图的 PNG 都已落盘。
+%   2) `save_fig_files` 开关 (默认 true 兼容旧行为；改 false 时只保存 PNG)，
+%      在 combined yyaxis 图较多时把整轮保存时间压到几秒。
+%   3) 每张图前打印 [save i/N] 进度行 + 各步骤 tic/toc 耗时，便于诊断哪张
+%      图异常慢，避免误判为"卡死"。
+%   4) 单张图保存完成后立刻 close(fig)，释放 HG 句柄/Java 资源，降低
+%      后续大图的 OOM 风险与渲染抖动。findall 在循环前已快照，安全。
+save_fig_files = true;   % 设为 false 可跳过 .fig，仅保存 PNG（更快）
 figHandles = findall(0, 'Type', 'figure');
-for fIdx = 1:numel(figHandles)
+N_fig = numel(figHandles);
+fprintf('\n[save] %d figures to %s (save_fig_files=%d)\n', ...
+    N_fig, save_dir, save_fig_files);
+for fIdx = 1:N_fig
     fig = figHandles(fIdx);
+    if ~isvalid(fig)
+        continue
+    end
     fig_name = get(fig, 'Name');
     if isempty(fig_name)
         fig_name = sprintf('figure_%d', fig.Number);
     end
     fig_path_fig = fullfile(save_dir, [fig_name, '.fig']);
     fig_path_png = fullfile(save_dir, [fig_name, '.png']);
-    try
-        savefig(fig, fig_path_fig, 'compact');
-    catch ME_fig
-        warning('savefig 失败 (%s): %s', fig_name, ME_fig.message);
-    end
-    % 仅含 image 对象 (imagesc 热力图) 的图切 opengl 渲染器加速 PNG 导出；
+    fprintf('[save %2d/%2d] %s ... ', fIdx, N_fig, fig_name);
+
+    % --- 仅含 image 对象 (imagesc 热力图) 的图切 opengl 渲染器加速 PNG 导出；
     % 其他图 (combined yyaxis bar+line 等) 保留默认 painters，避免半透明
     % patch 在 opengl 软件回退下静默失败。
     has_image_obj = ~isempty(findall(fig, 'Type', 'image'));
@@ -1487,6 +1498,9 @@ for fIdx = 1:numel(figHandles)
             % 某些 headless / 旧版本无 opengl，忽略并走默认渲染器
         end
     end
+
+    % --- PNG 优先 (用户主要分析的成品) -----------------------------------
+    t_png = tic;
     saved_png = false;
     if exist('exportgraphics', 'file') == 2  % R2020a+ 才有
         try
@@ -1499,9 +1513,45 @@ for fIdx = 1:numel(figHandles)
     if ~saved_png
         try
             saveas(fig, fig_path_png);
+            saved_png = true;
         catch ME_sa
             warning('saveas 也失败 (%s): %s', fig_name, ME_sa.message);
         end
+    end
+    dt_png = toc(t_png);
+    if saved_png
+        fprintf('png ok (%.1fs)', dt_png);
+    else
+        fprintf('png FAILED (%.1fs)', dt_png);
+    end
+    if dt_png > 60
+        warning('plotSave:SlowPng', ...
+            '%s PNG 保存耗时 %.1fs (>60s)，考虑降低分辨率或简化图层。', ...
+            fig_name, dt_png);
+    end
+
+    % --- .fig 其次 (可选) -----------------------------------------------
+    if save_fig_files
+        t_fig = tic;
+        try
+            savefig(fig, fig_path_fig, 'compact');
+            dt_fig = toc(t_fig);
+            fprintf(', fig ok (%.1fs)', dt_fig);
+        catch ME_fig
+            dt_fig = toc(t_fig);
+            fprintf(', fig FAILED (%.1fs)', dt_fig);
+            warning('savefig 失败 (%s): %s', fig_name, ME_fig.message);
+        end
+    else
+        fprintf(', fig skipped');
+    end
+
+    fprintf('\n');
+    % 释放图形句柄，避免后续大图渲染时内存累积
+    try
+        close(fig);
+    catch
+        % 不可关闭的特殊 figure 忽略
     end
 end
 

@@ -42,7 +42,15 @@ addParameter(p, 'StdR3',   [], @(x) isempty(x) || isnumeric(x));
 addParameter(p, 'OutFile', "", @(x) ischar(x) || isstring(x));
 addParameter(p, 'FigName', 'Fig_Combined_R3', @(x) ischar(x) || isstring(x));
 addParameter(p, 'YLim',    [], @(x) isempty(x) || (isnumeric(x) && numel(x) == 2));
-addParameter(p, 'EnforceMonotone', true, @(x) islogical(x) || (isnumeric(x) && isscalar(x)));
+% EnforceMonotone accepts:
+%   'auto'        — per-series direction inferred from data sign (default; see PAVA block below)
+%   'increasing'  — force isotonic-increasing projection
+%   'decreasing'  — force isotonic-decreasing projection (legacy R1-style prior)
+%   true          — backward-compat alias for 'decreasing' (preserves prior callers)
+%   false         — disable PAVA, plot raw empirical means
+addParameter(p, 'EnforceMonotone', 'auto', @(x) ...
+    islogical(x) || (isnumeric(x) && isscalar(x)) || ...
+    (ischar(x) || isstring(x)));
 parse(p, varargin{:});
 opt = p.Results;
 
@@ -81,17 +89,82 @@ delay_idx       = setdiff(1:numS, nodelay_idx);
 % "positive bar = delay scenario performs worse than no_delay".
 delta_R3_bar    = mean_R3(:, delay_idx) - mean_R3(:, nodelay_idx);  % numA × (numS-1)
 
-% --- 单调投影 (PAVA) ----------------------------------------------------
-% 与 plotCombinedR1 同源：ΔDTE(α) 在物理上必须关于 α 单调递减（α↑ → 容量
-% 裕度↑ → 延迟危害↓，对 R3 = capacity-weighted NRMSE 而言"延迟危害↓"
-% 等价于 ΔDTE↓）。在有限 Monte-Carlo 样本与 CRN 条件下，empirical 均值
-% 残余噪声会局部反转单调性。PAVA 投影到单调-递减锥上，是该约束下的
-% 约束极大似然估计 (Robertson, Wright, Dykstra 1988, §1.2)。
-% 默认开启；'EnforceMonotone', false 关闭以查看 raw empirical 均值。
+% --- 单调投影 (PAVA, 数据自适应方向) -------------------------------------
+% 与 plotCombinedR1 同源：两者都用 PAVA (Robertson, Wright, Dykstra 1988,
+% §1.2) 把每条 ΔMetric(α) 序列投影到单调锥上以抑制 Monte-Carlo 噪声。
+% 但**方向先验对 R1 与 R3 必须区别处理**：
+%   * R1 = served-load 数量指标，α↑ → 容量裕度↑ → 延迟下的丢负荷↓ →
+%     ΔLSR(α) 物理上单调递减——decreasing 先验对所有典型 delay 场景成立。
+%   * R3 = capacity-weighted NRMSE（"偏离参考程度"），α↑ 让 no_delay 的
+%     稳态误差几乎归零（η⁺ 收益完全释放），而 heavy 场景始终被
+%     τ_q/τ_m/τ_e 延迟天花板压住存在非零渐近底；两者之差
+%     ΔDTE(α) = R3_scenario(α) − R3_no_delay(α) 在不少参数下反而**单调
+%     递增**（α=0.1 时 ≈0.04，α=1.0 时 ≈0.10）。
+% 早期版本沿用 R1 的 'decreasing' 先验，把一条递增序列投影到递减锥上，
+% PAVA 的最优解就是**整段塌成均值常数**——这是 isotonic regression
+% 在违反约束方向时的解析行为 (cf. Barlow et al. 1972, Thm 1.10)，
+% 直观表现就是图里 ΔDTE 柱呈现四条等高横带，完全掩盖 α-敏感性。
+%
+% 修复：默认 EnforceMonotone='auto'，对每个 delay scenario 独立用
+% Spearman 秩相关 sign(corr_s(α, ΔDTE_s)) 判定方向：
+%   * 正相关 → 'increasing' 投影
+%   * 负相关 → 'decreasing' 投影
+%   * 零相关或 numA<3 → 跳过投影（无足够数据估方向，宁可保留 raw 噪声）
+% 理论依据：约束方向已知时 PAVA 是单调锥下的 constrained MLE；方向未知
+% 时由数据估方向再投影，等价于在 {increasing, decreasing} 两个锥的并集
+% 上做 L2 最近邻投影 (two-step isotonic regression with sign-selected
+% order)，仍属同一约束族下的 constrained M-estimator，不引入新假设。
+% 这样既保留 R1 已经正确的去噪能力，也修复 R3 被错误先验压平的问题。
 % 左轴 R3 折线**不**做投影，保留原始 mean。
-if opt.EnforceMonotone
+mono_mode = opt.EnforceMonotone;
+if islogical(mono_mode) || (isnumeric(mono_mode) && isscalar(mono_mode))
+    % 布尔/数值向后兼容：true → 'decreasing'（旧默认），false → 关闭
+    if logical(mono_mode)
+        mono_mode = 'decreasing';
+    else
+        mono_mode = 'off';
+    end
+else
+    mono_mode = lower(strtrim(char(string(mono_mode))));
+end
+valid_modes = {'auto','increasing','decreasing','off','false','true'};
+if ~ismember(mono_mode, valid_modes)
+    warning('plotCombinedR3:BadEnforceMonotone', ...
+        'EnforceMonotone="%s" not recognized; falling back to ''auto''.', mono_mode);
+    mono_mode = 'auto';
+end
+if strcmp(mono_mode, 'true'),  mono_mode = 'decreasing'; end
+if strcmp(mono_mode, 'false'), mono_mode = 'off';        end
+
+if ~strcmp(mono_mode, 'off')
     for s = 1:size(delta_R3_bar, 2)
-        delta_R3_bar(:, s) = monotoneIsotonicProjection(delta_R3_bar(:, s), 'decreasing');
+        col = delta_R3_bar(:, s);
+        switch mono_mode
+            case 'auto'
+                valid = ~isnan(col);
+                nv    = sum(valid);
+                if nv < 3
+                    continue  % 样本不足以估方向，保留 raw
+                end
+                % Spearman 秩相关方向判定 (toolbox-free implementation,
+                % see local_rank_corr helper at bottom of file). 仅用 sign
+                % 决定投影方向，强度大小不参与。
+                xv_v = alpha_range(valid);
+                yv_v = col(valid);
+                rho  = local_rank_corr(xv_v, yv_v);
+                if rho > 0
+                    dir_s = 'increasing';
+                elseif rho < 0
+                    dir_s = 'decreasing';
+                else
+                    continue  % 零相关，无方向证据
+                end
+            case {'increasing','decreasing'}
+                dir_s = mono_mode;
+            otherwise
+                dir_s = 'decreasing';
+        end
+        delta_R3_bar(:, s) = monotoneIsotonicProjection(col, dir_s);
     end
 end
 
@@ -195,4 +268,46 @@ if strlength(string(opt.OutFile)) > 0
             'exportgraphics failed: %s', ME.message);
     end
 end
+end
+
+% --- Local helper: Spearman rank correlation (toolbox-free) -------------
+% Avoids dependency on Statistics Toolbox 'corr'. Returns rank Pearson
+% correlation; ties broken via average ranks. Used only to determine the
+% *sign* (increasing vs decreasing) of the monotone direction for PAVA.
+function rho = local_rank_corr(x, y)
+    x = x(:); y = y(:);
+    n = numel(x);
+    if n < 2
+        rho = 0; return
+    end
+    rx = local_tiedrank(x);
+    ry = local_tiedrank(y);
+    rx = rx - mean(rx);
+    ry = ry - mean(ry);
+    denom = sqrt(sum(rx.^2) * sum(ry.^2));
+    if denom <= 0
+        rho = 0;
+    else
+        rho = sum(rx .* ry) / denom;
+    end
+end
+
+function r = local_tiedrank(v)
+    v = v(:);
+    n = numel(v);
+    [vs, si] = sort(v);
+    r = zeros(n, 1);
+    r(si) = 1:n;
+    % Average ties (groups of equal values get the mean of their ranks)
+    i = 1;
+    while i <= n
+        j = i;
+        while j < n && vs(j+1) == vs(i)
+            j = j + 1;
+        end
+        if j > i
+            r(si(i:j)) = (i + j) / 2;
+        end
+        i = j + 1;
+    end
 end
