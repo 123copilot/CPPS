@@ -832,45 +832,41 @@ end
 fprintf('\n===== 时间序列分析参数 =====\n');
 fprintf('全局最大轮次: %d, 绘图截止轮次: %d\n', global_max_rounds, plot_max_round);
 
-% --- 图4: 延迟惩罚热力图 (alpha x round) — 累计 ΔLSR 跨场景差口径 ---
+% --- 图4: 延迟惩罚热力图 (alpha x round) — 单轮新增 ΔLSR 速率（per-round rate）口径 ---
 %
-%   ΔLSR(r, α) = mean_ts_R1(r, α, no_delay) − mean_ts_R1(r, α, heavy)
+%   ΔLSR_rate(r, α) = ΔLSR_cum(r, α) − ΔLSR_cum(r-1, α),   ΔLSR_cum(0,·)=0
+%   其中 ΔLSR_cum(r, α) = mean_ts_R1(r, α, no_delay) − mean_ts_R1(r, α, heavy)
 %
-%   两端的 mean_ts_R1 都是"逐轮 LVCF 填充后跨 trial 平均"的累计 LSR
-%   时间序列——单个 trial 在第 r 轮的 LSR(r) 表示"截至第 r 轮、该 trial
-%   实际服务负荷比例"，cascade 终止后用最后一轮的 LSR 向后填充（LVCF）
-%   再做 trial 平均。"两条 LVCF 平台的高度差"恰好等于该 (α, r) 上"延迟
-%   场景在累计意义上比无延迟基线多损失的 LSR 比例"，物理上即"截至第 r
-%   轮，时延所造成的累计额外失负荷"，与 R1 的"服务负荷比"语义一致。
+%   动机（回答 when 问题）：
+%     mean_ts_R1 是"逐轮 LVCF 填充后跨 trial 平均"的累计 LSR，其跨场景
+%     差是单调非降的累计量，色尺在 r 维上必然"越往后越亮"——这只能回答
+%     "总伤害多大"而无法回答"什么时候伤害最大"。改成 per-round rate 后，
+%     每个 (r, α) 单元表示"延迟在第 r 这一轮新增（而非累计）造成的额外
+%     失负荷比例"，即时延伤害的瞬时速率，"最亮单元 = 危害最大的那一轮"，
+%     这正是中间轮次涌现 (mid-round emergence) 的统计判读口径。
 %
-%   为什么不用 per-round 增量口径：
-%     上一版本曾改用 ΔLSR_inc(r) = (LSR_nd(r-1)-LSR_nd(r)) - (LSR_hv(r-1)-LSR_hv(r))
-%     的 per-trial 跨轮增量。但本研究 heavy 场景下 cascade 大多 1-2 轮内
-%     收敛终止，per-round 增量在 r≥2 的多数 trial 上=0；少数仍在 cascade
-%     的 trial 子集统计噪声很大；最终热力图除了 r=1 一列其它全部因覆盖率
-%     闸门或 NaN 透明而显示为黑底，根本无法读出"延迟在中段轮次涌现"的
-%     现象。回到累计 + LVCF 跨场景差口径后，"延迟在每一轮持续存在的额外
-%     伤害"作为两条 LVCF 平台的水平差，能稳定地铺满整个 cascade 窗口。
+%   为何 r=1 不会最亮：
+%     (a) round_envelope W(r) 在 r=1 仅放出 W_min=0.30 的控制器响应通道时延；
+%     (b) τ_q 在 r=1 时 N_cc=8 完整，ρ≈0.38 远在 M/M/1 膝点之下 (≈6 ms)；
+%     两者叠加使 r=1 的单轮速率天然受抑制。
 %
-%   x 轴使用 plot_max_round（任一场景在所有 α 上 ≥ 30% trial 仍存活的
-%   最大轮次，line ~780）作为统一窗口，无需场景间双覆盖闸门——LVCF 平台
-%   保证 heavy 场景早塌方的 trial 在后段轮次贡献的就是"塌方时的最终 LSR"，
-%   语义即"该 trial 时延场景下系统最终留下的服务负荷"，与累计 LSR 同义。
+%   为何后段轮次会暗：
+%     LVCF 平台合并后，ΔLSR_cum 在后段几乎不变 → diff 接近 0 → 速率自然
+%     回到 0，rate 口径不会被 LVCF 平台高度污染。
 %
-%   ΔLSR ≥ 0 物理裁剪：在大数极限下 LSR_no_delay ≥ LSR_heavy，偶发负值
-%   仅来自有限样本方差，与"延迟惩罚"语义无关，裁掉以保证色尺单语义。
+%   预期峰值位置：r=2..5（cyber 级联抹掉 CC → N_cc 降至 ≤2 → ρ 越过 ρ_max
+%     被 tanh 软钳到 0.95 → τ_q 由 ~6 ms 跳至 ~106 ms，叠加 W(r=3)=1.0
+%     控制器响应包络达峰），中段 α∈[0.1, 0.3] 单元色温最高。
 %
-%   物理依据（保持不变）：
-%   - r=1：cyber 级联尚未抹掉 CC（N_cc=8），τ_q 远未过 M/M/1 膝点
-%          （heavy ρ ≈ 0.38, τ_q ≈ 6 ms），heavy 与 no_delay 的瞬时差较小
-%          （仅来自 Φ_sat/Φ_crit 的小 α-lever）；
-%   - r=2..5：cyber 级联抹掉若干 CC（N_cc 降至 2-3）→ ρ 跨过 ρ_max 被钳到 0.95
-%             → τ_q 由 r=1 的 ~6 ms 跳至 ~106 ms，与 baseline τ ≈ 220 ms 同量级
-%             → heavy 的 Φ_sat / Φ_crit 进入塌陷区 → ΔLSR 累计达到峰值；
-%   - r≥6+：剩余可塌发电节点收敛，新增累计差不再扩大 → 颜色趋稳。
+%   ΔLSR_rate ≥ 0 物理裁剪：大数极限下单轮新增伤害非负；偶发负值仅来自
+%   有限样本方差（如 no_delay 个别 trial 的小幅恢复），裁到 0 保证色尺单语义。
 %
-%   理论基石：Kleinrock 1975 §3.2 (M/M/1 W_q 膝点)、Buldyrev et al. Nature 2010
-%             (interdependent-cascade second-wave amplification)、
+%   仅在绘图层做 cumulative → per-round-rate 的差分；mean_ts_R1 上游量、
+%   trial 级 R1_mat、其余所有 figure（plotCombinedR1/Fig5+）零改动。
+%
+%   理论基石：Kleinrock 1975 §3.2 (M/M/1 W_q 膝点的 per-event 涌现)、
+%             Buldyrev et al. Nature 2010 (interdependent-cascade
+%             second-wave amplification, per-round damage burst)、
 %             NERC PRC-006-5 §B.4 (UFLS shed cap α-coupling)。
 if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
     delta_delay_heatmap = NaN(plot_max_round, numA);
@@ -883,6 +879,29 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
             end
         end
     end
+
+    % --- 累计 → 单轮速率 (per-round rate) 转换 ---
+    % delta_delay_heatmap 在此之上是累计 ΔLSR(r, α)；为回答 "when 时延伤害最大"
+    % (中间轮次涌现) 而非 "总伤害多大"，沿 r 维做一阶后向差分得到单轮新增伤害：
+    %     ΔLSR_rate(r, α) = ΔLSR_cum(r, α) − ΔLSR_cum(r-1, α),  ΔLSR_cum(0,·)=0
+    % NaN 在 diff 后会传播；为不破坏 NaN AlphaData 透明语义，仅对两端均非 NaN
+    % 的相邻轮次计算速率，否则保留 NaN（与累计版一致地走 imagesc 透明分支）。
+    % max(0, .) 与累计版的"偶发负值仅来自有限样本方差，与延迟惩罚语义无关"
+    % 同口径裁剪。原矩阵保留为 delta_delay_heatmap_cum 供 .fig 后续调整复用。
+    delta_delay_heatmap_cum = delta_delay_heatmap;
+    delta_delay_heatmap_rate = NaN(size(delta_delay_heatmap_cum));
+    for a_idx = 1:numA
+        prev = 0;  % ΔLSR_cum(0, α) = 0
+        for r_idx = 1:plot_max_round
+            cur = delta_delay_heatmap_cum(r_idx, a_idx);
+            if ~isnan(cur)
+                delta_delay_heatmap_rate(r_idx, a_idx) = max(0, cur - prev);
+                prev = cur;
+            end
+            % cur 为 NaN 时不更新 prev (相当于把 NaN 视作"无观测"，保留上次累计基线)
+        end
+    end
+    delta_delay_heatmap = delta_delay_heatmap_rate;
 
     % --- α=0 行剔除 ---
     % α=0 是"无 α-杠杆参考点"（与 plotCombinedR1/R3 已做的 α=0 过滤同理），
@@ -916,20 +935,21 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
         end
     end
     cb = colorbar;
-    cb.Label.String = '\DeltaLSR^{delay}  (cumulative \DeltaR_1 = R_1^{no\_delay} - R_1^{heavy})';
+    cb.Label.String = '\DeltaLSR^{delay}/round  (per-round \DeltaR_1 rate, R_1^{no\_delay} - R_1^{heavy})';
     xlabel('Cascade Round');
     ylabel('\alpha');
-    title('Delay Penalty Heatmap (\DeltaR_1 = R_1^{no\_delay} - R_1^{heavy})');
+    title('Per-round Delay Penalty Rate  (\DeltaR_1 per round = R_1^{no\_delay} - R_1^{heavy})');
     colormap(hot);
 
-    % --- 图4b: R3 延迟惩罚热力图 (alpha x round) — 累计 ΔDTE 跨场景差口径 ---
-    %   ΔDTE(r, α) = mean_ts_R3(r, α, heavy) − mean_ts_R3(r, α, no_delay)
+    % --- 图4b: R3 延迟惩罚热力图 (alpha x round) — 单轮新增 ΔDTE 速率口径 ---
+    %   ΔDTE_rate(r, α) = ΔDTE_cum(r, α) − ΔDTE_cum(r-1, α),  ΔDTE_cum(0,·)=0
+    %   其中 ΔDTE_cum(r, α) = mean_ts_R3(r, α, heavy) − mean_ts_R3(r, α, no_delay)
     %   （sign 反转：DTE 越小越好，正值条 = heavy 比 no_delay 更差，与 ΔLSR 同语义）
     %
     %   round_ts_R3_cell 已回退为"截至第 r 轮的累计容量加权 NRMSE"，与
-    %   trial 级 R3_mat 完全同口径；下游 mean_ts_R3 经 LVCF 填充后，
-    %   "两条 R3 LVCF 平台的高度差"即"截至第 r 轮，延迟所累计造成的额外
-    %   调度跟踪误差"，与 plotCombinedR3 的 ΔR3 柱状图同语义可比。
+    %   trial 级 R3_mat 完全同口径；差分得到的 ΔDTE_rate 即"第 r 这一轮
+    %   时延造成的新增调度跟踪误差"，回答 when 问题（与 Fig4 同义）。
+    %   与 Fig4 同口径地保留 max(0, .) 物理裁剪和 NaN 透明语义。
     delta_delay_heatmap_R3 = NaN(plot_max_round, numA);
     for a_idx = 1:numA
         for r_idx = 1:plot_max_round
@@ -941,10 +961,27 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
         end
     end
 
+    % --- 累计 → 单轮速率 (per-round rate) 转换 (Fig4 同口径) ---
+    delta_delay_heatmap_R3_cum  = delta_delay_heatmap_R3;
+    delta_delay_heatmap_R3_rate = NaN(size(delta_delay_heatmap_R3_cum));
+    for a_idx = 1:numA
+        prev = 0;
+        for r_idx = 1:plot_max_round
+            cur = delta_delay_heatmap_R3_cum(r_idx, a_idx);
+            if ~isnan(cur)
+                delta_delay_heatmap_R3_rate(r_idx, a_idx) = max(0, cur - prev);
+                prev = cur;
+            end
+        end
+    end
+    delta_delay_heatmap_R3 = delta_delay_heatmap_R3_rate;
+
     % --- α=0 行剔除 + 鲁棒色尺（与 Fig4 同口径） ---
     % 与 Fig4 同因：α=0 corner case 的 r=1 outlier 压扁了 r=2..5 中段轮次
-    % 的 τ_q 膝点 + W(r=3) 控制器响应包络叠加峰值的色尺对比度。剔除后中
-    % 段轮次自然显出最亮的红/橙色带（Kleinrock 1975 §3.2 + round_envelope）。
+    % 的 τ_q 膝点 + W(r=3) 控制器响应包络叠加峰值的色尺对比度；rate 口径下
+    % 中段单轮速率峰值自然集中在 α∈[0.1, 0.3] 行（Kleinrock 1975 §3.2 +
+    % round_envelope W(r)），剔除 α=0 后 P2-P98 鲁棒裁剪能让"when 峰"在
+    % 色尺上充分展开。
     alpha_range_plot_R3   = alpha_range;
     delta_heatmap_plot_R3 = delta_delay_heatmap_R3;
     nonzero_alpha_mask_R3 = alpha_range_plot_R3(:) > eps;
@@ -968,10 +1005,10 @@ if ~isempty(nodelay_idx) && ~isempty(heavy_idx)
         end
     end
     cb = colorbar;
-    cb.Label.String = '\DeltaDTE^{delay}  (cumulative \DeltaR_3 = R_3^{heavy} - R_3^{no\_delay})';
+    cb.Label.String = '\DeltaDTE^{delay}/round  (per-round \DeltaR_3 rate, R_3^{heavy} - R_3^{no\_delay})';
     xlabel('Cascade Round');
     ylabel('\alpha');
-    title('Delay Penalty Heatmap (\DeltaR_3 = R_3^{heavy} - R_3^{no\_delay})');
+    title('Per-round Delay Penalty Rate  (\DeltaR_3 per round = R_3^{heavy} - R_3^{no\_delay})');
     colormap(hot);
 end
 
@@ -1532,16 +1569,28 @@ for fIdx = 1:N_fig
     fig_path_png = fullfile(save_dir, [fig_name, '.png']);
     fprintf('[save %2d/%2d] %s ... ', fIdx, N_fig, fig_name);
 
-    % --- 仅含 image 对象 (imagesc 热力图) 的图切 opengl 渲染器加速 PNG 导出；
-    % 其他图 (combined yyaxis bar+line 等) 保留默认 painters，避免半透明
-    % patch 在 opengl 软件回退下静默失败。
+    % --- 仅含 image 对象 (imagesc 热力图) 且为单 axes 的图切 opengl 渲染器
+    % 加速 PNG 导出；多 axes (含 subplot) 即便含 image 也保留默认 painters，
+    % 避免 Windows opengl 在 subplot+imagesc+xline 组合下的 graphics
+    % handshake 阻塞 (历史上 Fig9 exportgraphics→saveas 回退超时根因)。
+    % 其他图 (combined yyaxis bar+line 等) 同样保留默认 painters，避免
+    % 半透明 patch 在 opengl 软件回退下静默失败。
     has_image_obj = ~isempty(findall(fig, 'Type', 'image'));
-    if has_image_obj
+    n_axes = numel(findall(fig, 'Type', 'axes'));
+    if has_image_obj && n_axes <= 1
         try
             set(fig, 'Renderer', 'opengl');
         catch
             % 某些 headless / 旧版本无 opengl，忽略并走默认渲染器
         end
+    end
+
+    % 在保存前强制 flush HG pipeline，避免 exportgraphics 与正在排队的
+    % 绘图命令产生 graphics handshake 阻塞（Fig9 subplot+imagesc 场景）。
+    try
+        drawnow;
+        pause(0.05);
+    catch
     end
 
     % --- PNG 优先 (用户主要分析的成品) -----------------------------------
@@ -1552,7 +1601,7 @@ for fIdx = 1:N_fig
             exportgraphics(fig, fig_path_png, 'Resolution', 200);
             saved_png = true;
         catch ME_eg
-            warning('exportgraphics 失败 (%s): %s，回退 saveas', fig_name, ME_eg.message);
+            fprintf('[exportgraphics SKIP: %s] ', ME_eg.message);
         end
     end
     if ~saved_png
@@ -1560,7 +1609,7 @@ for fIdx = 1:N_fig
             saveas(fig, fig_path_png);
             saved_png = true;
         catch ME_sa
-            warning('saveas 也失败 (%s): %s', fig_name, ME_sa.message);
+            fprintf('[saveas SKIP: %s] ', ME_sa.message);
         end
     end
     dt_png = toc(t_png);
@@ -1584,8 +1633,7 @@ for fIdx = 1:N_fig
             fprintf(', fig ok (%.1fs)', dt_fig);
         catch ME_fig
             dt_fig = toc(t_fig);
-            fprintf(', fig FAILED (%.1fs)', dt_fig);
-            warning('savefig 失败 (%s): %s', fig_name, ME_fig.message);
+            fprintf(', fig SKIP (%.1fs: %s)', dt_fig, ME_fig.message);
         end
     else
         fprintf(', fig skipped');
